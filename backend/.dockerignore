@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/.vs
+**/.idea
+**/node_modules
+**/Migrations/*.Designer.cs.bak
+.git
+.gitignore
+*.md
+docker-compose*.yml
+.env
+**/*.user

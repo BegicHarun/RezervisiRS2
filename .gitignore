@@ -1,0 +1,31 @@
+# ==== Tajne / konfiguracija (NIKAD u Git) ====
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# ==== .NET (backend) ====
+**/bin/
+**/obj/
+*.user
+appsettings.Development.json
+
+# ==== Flutter / Dart (mobile, desktop) ====
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+*.iml
+**/.idea/
+
+# ==== Build artefakti (idu u GitHub Release, ne u Git) ====
+**/*.apk
+**/*.exe
+**/Release/
+
+# ==== OS / editor ====
+.DS_Store
+**/.DS_Store
+Thumbs.db
+**/.vscode/

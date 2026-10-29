@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RezervisiMe.API</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- EF Core 10 (LTS) - svi EF paketi moraju biti ista verzija -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
+    <!-- ASP.NET Core Identity + JWT -->
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
+
+    <!-- Swagger / OpenAPI. 7.2.0 koristi Microsoft.OpenApi v1 (namespace Microsoft.OpenApi.Models). -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+    <PackageReference Include="Microsoft.OpenApi" Version="1.6.22" />
+
+    <!-- Konfiguracija iz .env fajla -->
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
+
+    <!-- RabbitMQ za slanje poruka workeru -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
+
+    <!-- Password hashing (nije obavezno jer Identity vec hashira, ali dostupno) -->
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+
+    <!-- PDF izvjestaji (7.8). QuestPDF Community licenca za edukativne/manje projekte. -->
+    <PackageReference Include="QuestPDF" Version="2024.12.3" />
+  </ItemGroup>
+
+</Project>
