@@ -61,8 +61,9 @@ class _BookingScreenState extends State<BookingScreen> {
       _selected = null;
     });
     try {
-      final slots = await context.read<ApiService>().getAvailableSlots(
-          _hairdresser!.id, widget.service.id, _date);
+      final slots = await context
+          .read<ApiService>()
+          .getAvailableSlots(_hairdresser!.id, widget.service.id, _date);
       setState(() => _slots = slots);
     } catch (e) {
       if (mounted) showError(context, e);
@@ -126,7 +127,7 @@ class _BookingScreenState extends State<BookingScreen> {
                         child: ListView(
                           padding: const EdgeInsets.all(16),
                           children: [
-                            _StepHeader(1, "Usluga"),
+                            const _StepHeader(1, "Usluga"),
                             Card(
                               child: Padding(
                                 padding: const EdgeInsets.all(14),
@@ -145,8 +146,7 @@ class _BookingScreenState extends State<BookingScreen> {
                                         Text(
                                             "${widget.service.durationMinutes} min · ${widget.service.price.toStringAsFixed(2)} KM",
                                             style: const TextStyle(
-                                                color:
-                                                    AppColors.textSecondary,
+                                                color: AppColors.textSecondary,
                                                 fontSize: 12)),
                                       ],
                                     ),
@@ -155,7 +155,7 @@ class _BookingScreenState extends State<BookingScreen> {
                               ),
                             ),
                             const SizedBox(height: 16),
-                            _StepHeader(2, "Frizer i datum"),
+                            const _StepHeader(2, "Frizer i datum"),
                             if (_hairdressers.length > 1)
                               DropdownButtonFormField<HairdresserDto>(
                                 initialValue: _hairdresser,
@@ -191,7 +191,7 @@ class _BookingScreenState extends State<BookingScreen> {
                               ),
                             ),
                             const SizedBox(height: 16),
-                            _StepHeader(3, "Termin"),
+                            const _StepHeader(3, "Termin"),
                             _Legend(),
                             const SizedBox(height: 12),
                             if (_loadingSlots)
@@ -213,8 +213,7 @@ class _BookingScreenState extends State<BookingScreen> {
                                 children: _slots.map((s) {
                                   final isSelected = _selected == s;
                                   return GestureDetector(
-                                    onTap: () =>
-                                        setState(() => _selected = s),
+                                    onTap: () => setState(() => _selected = s),
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 16, vertical: 10),
@@ -223,8 +222,7 @@ class _BookingScreenState extends State<BookingScreen> {
                                             ? AppColors.slotSelected
                                             : AppColors.slotFree
                                                 .withValues(alpha: 0.15),
-                                        borderRadius:
-                                            BorderRadius.circular(10),
+                                        borderRadius: BorderRadius.circular(10),
                                         border: Border.all(
                                             color: isSelected
                                                 ? AppColors.slotSelected
@@ -253,8 +251,8 @@ class _BookingScreenState extends State<BookingScreen> {
                           padding: const EdgeInsets.all(16),
                           decoration: const BoxDecoration(
                             color: AppColors.surface,
-                            borderRadius: BorderRadius.vertical(
-                                top: Radius.circular(20)),
+                            borderRadius:
+                                BorderRadius.vertical(top: Radius.circular(20)),
                           ),
                           child: SafeArea(
                             top: false,
@@ -263,8 +261,7 @@ class _BookingScreenState extends State<BookingScreen> {
                               children: [
                                 _summaryRow("Usluga", widget.service.name),
                                 _summaryRow("Frizer", _hairdresser!.fullName),
-                                _summaryRow(
-                                    "Termin",
+                                _summaryRow("Termin",
                                     "${df.format(_date)} u ${tf.format(_selected!.startTime)}"),
                                 _summaryRow("Trajanje",
                                     "${widget.service.durationMinutes} min"),
@@ -340,10 +337,17 @@ class _StepHeader extends StatelessWidget {
 class _Legend extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    Widget dot(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 12, height: 12, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
+    Widget dot(Color c, String label) =>
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                  color: c, borderRadius: BorderRadius.circular(3))),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary)),
         ]);
     return Row(children: [
       dot(AppColors.slotFree, "Slobodno"),

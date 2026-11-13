@@ -2,24 +2,19 @@
 
 Klijentski dio platforme RezervisiMe. Seminarski rad RS II, IB220008.
 
-## Preduslovi
-- Flutter SDK (3.5+), Xcode + iOS Simulator (macOS)
-- Pokrenut backend (RezervisiMe.API) na `http://localhost:5001`
+## Pokretanje na Android emulatoru
 
-## Povezivanje na backend
-Vidi `lib/services/config.dart`. Za iOS simulator `localhost` radi direktno.
-Bitno: backend mora slusati HTTP (ne samo HTTPS) — provjeri port u konzoli
-backenda i po potrebi ga uskladi u `config.dart`.
+Pokreni backend prema uputama u korijenskom README-u. API treba biti dostupan na hostu na portu 5126. Pokreni Android emulator, pa iz foldera mobilne aplikacije izvrši:
 
-## Pokretanje
-```bash
+```powershell
 flutter pub get
-open -a Simulator            # pokreni iOS simulator
-flutter run
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5126/api
 ```
 
+Adresa '10.0.2.2' je pristup hostu iz Android emulatora. Za fizički uređaj koristi dostupnu HTTPS adresu API-ja. Za iOS simulator na istom računaru API adresu zadaj prema lokalnoj konfiguraciji.
+
 ## Ekrani (prate prijedlog iz dokumentacije)
-- Prijava / registracija
+- Prijava / registracija / reset lozinke putem e-maila
 - Pocetna: preporuke (recommender), kategorije, lista salona
 - Pretraga sa filterom po gradu
 - Profil salona: usluge po kategorijama, recenzije, ocjena
@@ -31,4 +26,4 @@ flutter run
 - Profil + odjava
 
 ## Test nalog
-`mobile` / `Test1234!` (vec upisano na login ekranu)
+`mobile` / `Test1234!`

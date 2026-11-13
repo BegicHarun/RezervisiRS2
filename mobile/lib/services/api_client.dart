@@ -16,7 +16,11 @@ class ApiException implements Exception {
 /// Tanak HTTP klijent oko backend REST API-ja.
 /// Cuva JWT token u memoriji i salje ga u Authorization headeru.
 class ApiClient {
+  ApiClient({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
   String? _token;
+  void Function()? onSessionExpired;
 
   void setToken(String? token) => _token = token;
   String? get token => _token;
@@ -37,23 +41,37 @@ class ApiClient {
   }
 
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) async {
-    final res = await http.get(_uri(path, query), headers: _headers);
-    return _handle(res);
+    final requestToken = _token;
+    final res = await _client
+        .get(_uri(path, query), headers: _headers)
+        .timeout(const Duration(seconds: 20));
+    return _handle(res, requestToken);
   }
 
   Future<dynamic> post(String path, {Object? body}) async {
-    final res = await http.post(_uri(path),
-        headers: _headers, body: body == null ? null : jsonEncode(body));
-    return _handle(res);
+    final requestToken = _token;
+    final res = await _client
+        .post(_uri(path),
+            headers: _headers, body: body == null ? null : jsonEncode(body))
+        .timeout(const Duration(seconds: 20));
+    return _handle(res, requestToken);
   }
 
   Future<dynamic> put(String path, {Object? body}) async {
-    final res = await http.put(_uri(path),
-        headers: _headers, body: body == null ? null : jsonEncode(body));
-    return _handle(res);
+    final requestToken = _token;
+    final res = await _client
+        .put(_uri(path),
+            headers: _headers, body: body == null ? null : jsonEncode(body))
+        .timeout(const Duration(seconds: 20));
+    return _handle(res, requestToken);
   }
 
-  dynamic _handle(http.Response res) {
+  dynamic _handle(http.Response res, String? requestToken) {
+    if (res.statusCode == 401 &&
+        requestToken != null &&
+        requestToken == _token) {
+      onSessionExpired?.call();
+    }
     final ok = res.statusCode >= 200 && res.statusCode < 300;
     dynamic parsed;
     if (res.body.isNotEmpty) {

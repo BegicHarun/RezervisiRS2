@@ -1,3 +1,5 @@
+import "dart:async";
+import "../services/api_client.dart";
 import "package:flutter/foundation.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "../models/user.dart";
@@ -7,7 +9,14 @@ import "../services/api_service.dart";
 /// Token se cuva u SharedPreferences da prijava preživi restart aplikacije.
 class AuthProvider extends ChangeNotifier {
   final ApiService _api;
-  AuthProvider(this._api);
+  AuthProvider(this._api) {
+    _api.client.onSessionExpired = () {
+      sessionExpired = true;
+      unawaited(_clearSession());
+    };
+  }
+
+  bool sessionExpired = false;
 
   UserDto? _user;
   String? _token;
@@ -31,13 +40,16 @@ class AuthProvider extends ChangeNotifier {
     try {
       _user = await _api.getProfile();
       notifyListeners();
-    } catch (_) {
-      // Token istekao ili nevazeci - odjavi.
-      await logout();
+    } catch (error) {
+      if (error is ApiException && error.statusCode == 401) return;
+      _token = null;
+      _api.client.setToken(null);
+      rethrow;
     }
   }
 
   Future<void> login(String username, String password) async {
+    if (_loading) return;
     _setLoading(true);
     try {
       final res = await _api.login(username, password);
@@ -48,6 +60,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> register(Map<String, dynamic> body) async {
+    if (_loading) return;
     _setLoading(true);
     try {
       final res = await _api.register(body);
@@ -65,12 +78,16 @@ class AuthProvider extends ChangeNotifier {
     } catch (_) {
       // ignorisi - lokalnu odjavu ionako radimo ispod
     }
+    await _clearSession();
+  }
+
+  Future<void> _clearSession() async {
     _token = null;
     _user = null;
     _api.client.setToken(null);
+    notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
-    notifyListeners();
   }
 
   /// Osvjezi podatke trenutnog korisnika sa servera (nakon izmjene profila).
@@ -80,12 +97,19 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> _applyAuth(AuthResponse res) async {
+    sessionExpired = false;
     _token = res.token;
     _user = res.user;
     _api.client.setToken(res.token);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, res.token);
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _api.client.onSessionExpired = null;
+    super.dispose();
   }
 
   void _setLoading(bool v) {

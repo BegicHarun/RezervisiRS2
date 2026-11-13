@@ -44,8 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
     final firstName = user?.firstName ?? "";
-    final initial =
-        firstName.isNotEmpty ? firstName[0].toUpperCase() : "?";
+    final initial = firstName.isNotEmpty ? firstName[0].toUpperCase() : "?";
 
     return Scaffold(
       body: SafeArea(
@@ -80,8 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     fontSize: 14)),
                             Text("$firstName 👋",
                                 style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold)),
+                                    fontSize: 24, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -109,14 +107,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         Icon(Icons.search, color: AppColors.textSecondary),
                         SizedBox(width: 12),
                         Text("Pretrazi frizere, salone, usluge...",
-                            style:
-                                TextStyle(color: AppColors.textSecondary)),
+                            style: TextStyle(color: AppColors.textSecondary)),
                       ]),
                     ),
                   ),
                   const SizedBox(height: 16),
                   // Kategorije - chipovi
-                  _CategoryChips(categories: data.categories, onTap: _openSearch),
+                  _CategoryChips(
+                      categories: data.categories, onTap: _openSearch),
                   const SizedBox(height: 24),
                   // Preporuceni saloni
                   if (data.recommendations.isNotEmpty) ...[
@@ -160,8 +158,7 @@ class _SectionHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(title,
-            style:
-                const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         GestureDetector(
           onTap: onSeeAll,
           child: const Text("Vidi sve",
@@ -231,9 +228,7 @@ class _CategoryChips extends StatelessWidget {
             children: [
               if (icon != null) ...[
                 Icon(icon,
-                    size: 16,
-                    color:
-                        active ? Colors.white : AppColors.primary),
+                    size: 16, color: active ? Colors.white : AppColors.primary),
                 const SizedBox(width: 6),
               ],
               Text(label,
@@ -257,7 +252,7 @@ class _RecommendedRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 176,
+      height: 224,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: recs.length,
@@ -302,8 +297,7 @@ class _RecommendedRow extends StatelessWidget {
                             const SizedBox(width: 2),
                             Text(r.averageRating.toStringAsFixed(1),
                                 style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold)),
+                                    fontSize: 12, fontWeight: FontWeight.bold)),
                           ]),
                         ),
                       ),
@@ -324,10 +318,18 @@ class _RecommendedRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSecondary)),
+                              fontSize: 12, color: AppColors.textSecondary)),
                     ),
                   ]),
+                  if (r.explanation.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(r.explanation,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary)),
+                    ),
                 ],
               ),
             ),

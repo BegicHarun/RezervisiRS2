@@ -26,7 +26,6 @@ class RezervisiMeApp extends StatelessWidget {
       providers: [
         Provider<ApiService>.value(value: apiService),
         ChangeNotifierProvider(create: (_) => AuthProvider(apiService)),
-        ChangeNotifierProvider(create: (_) => NotificationsProvider(apiService)),
       ],
       child: MaterialApp(
         title: "RezervisiMe",
@@ -47,24 +46,67 @@ class _AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<_AuthGate> {
   bool _checked = false;
+  Object? _startupError;
+  late final AuthProvider _auth;
 
   @override
   void initState() {
     super.initState();
+    _auth = context.read<AuthProvider>()..addListener(_onSessionChanged);
     _init();
   }
 
   Future<void> _init() async {
-    await context.read<AuthProvider>().tryAutoLogin();
-    if (mounted) setState(() => _checked = true);
+    try {
+      await _auth.tryAutoLogin();
+      if (mounted) setState(() => _checked = true);
+    } catch (error) {
+      if (mounted) setState(() => _startupError = error);
+    }
+  }
+
+  void _onSessionChanged() {
+    if (!_auth.sessionExpired || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _auth.sessionExpired) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _auth.removeListener(_onSessionChanged);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_startupError != null) {
+      return Scaffold(
+          body: Center(
+              child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("Povezivanje s API-jem nije uspjelo."),
+          TextButton(
+              onPressed: () {
+                setState(() => _startupError = null);
+                _init();
+              },
+              child: const Text("Pokušaj ponovo")),
+        ],
+      )));
+    }
     if (!_checked) {
       return const Scaffold(body: LoadingView());
     }
     final auth = context.watch<AuthProvider>();
-    return auth.isLoggedIn ? const RootScaffold() : const LoginScreen();
+    return auth.isLoggedIn
+        ? ChangeNotifierProvider(
+            create: (_) => NotificationsProvider(context.read<ApiService>()),
+            child: const RootScaffold(),
+          )
+        : const LoginScreen();
   }
 }

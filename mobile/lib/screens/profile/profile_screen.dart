@@ -1,3 +1,5 @@
+import "dart:convert";
+import "package:image_picker/image_picker.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 import "../../providers/auth_provider.dart";
@@ -21,19 +23,8 @@ class ProfileScreen extends StatelessWidget {
           children: [
             const SizedBox(height: 16),
             Center(
-              child: CircleAvatar(
-                radius: 44,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-                child: Text(
-                  user == null || user.firstName.isEmpty
-                      ? "?"
-                      : user.firstName[0].toUpperCase(),
-                  style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary),
-                ),
-              ),
+              child: _ProfileAvatar(
+                  imageUrl: user?.imageUrl, name: user?.firstName ?? ""),
             ),
             const SizedBox(height: 12),
             Center(
@@ -118,12 +109,19 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   late TextEditingController _last;
   List<CityDto> _cities = [];
   int? _cityId;
+  String? _imageUrl;
+  String? _cityName;
+  bool _citiesReady = false;
+  bool _cityLoadFailed = false;
+  bool _picking = false;
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     final u = context.read<AuthProvider>().user;
+    _imageUrl = u?.imageUrl;
+    _cityName = u?.cityName;
     _first = TextEditingController(text: u?.firstName ?? "");
     _last = TextEditingController(text: u?.lastName ?? "");
     _loadCities();
@@ -131,17 +129,64 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
 
   Future<void> _loadCities() async {
     try {
-      final res = await context.read<ApiService>().getCities();
+      final api = context.read<ApiService>();
+      final cities = <CityDto>[];
+      var page = 1;
+      while (mounted) {
+        final result = await api.getCities(page: page);
+        cities.addAll(result.items);
+        if (page >= result.totalPages) break;
+        page++;
+      }
       if (!mounted) return;
       setState(() {
-        _cities = res.items;
-        // Predizaberi trenutni grad korisnika po imenu, ako se poklopi.
-        final cityName = context.read<AuthProvider>().user?.cityName;
-        final match = _cities.where((c) => c.name == cityName);
-        if (match.isNotEmpty) _cityId = match.first.id;
+        _cities = cities;
+        final matches = cities.where((city) => city.name == _cityName).toList();
+        if (matches.length == 1) _cityId = matches.single.id;
+        _citiesReady = true;
+        _cityLoadFailed = false;
       });
     } catch (_) {
-      // dropdown ostaje prazan - grad je opcionalan
+      if (mounted) setState(() => _cityLoadFailed = true);
+    }
+  }
+
+  Future<void> _pickImage() async {
+    if (_picking || _busy) return;
+    setState(() => _picking = true);
+    try {
+      final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 80,
+      );
+      if (file == null || !mounted) return;
+      if (await file.length() > 512 * 1024) {
+        throw const FormatException("Odaberite sliku do 512 KB.");
+      }
+      final bytes = await file.readAsBytes();
+      final jpeg = bytes.length > 3 &&
+          bytes[0] == 255 &&
+          bytes[1] == 216 &&
+          bytes[2] == 255;
+      final png = bytes.length > 8 &&
+          const [137, 80, 78, 71, 13, 10, 26, 10]
+              .asMap()
+              .entries
+              .every((entry) => bytes[entry.key] == entry.value);
+      if (!jpeg && !png) {
+        throw const FormatException("Odaberite JPEG ili PNG sliku.");
+      }
+      final type = jpeg ? "jpeg" : "png";
+      if (mounted) {
+        setState(
+            () => _imageUrl = "data:image/$type;base64,${base64Encode(bytes)}");
+      }
+    } catch (error) {
+      if (mounted) showError(context, error);
+    } finally {
+      if (mounted) setState(() => _picking = false);
     }
   }
 
@@ -153,15 +198,18 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_busy || _picking || !_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
+      final auth = context.read<AuthProvider>();
       await context.read<ApiService>().updateProfile({
         "firstName": _first.text.trim(),
         "lastName": _last.text.trim(),
         "cityId": _cityId,
+        "imageUrl": _imageUrl,
       });
-      await context.read<AuthProvider>().refreshUser();
+      if (!mounted) return;
+      await auth.refreshUser();
       if (mounted) {
         Navigator.pop(context);
         showOk(context, "Profil je uspjesno azuriran.");
@@ -178,7 +226,8 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 20, 16, bottom + 20),
-      child: Form(
+      child: SingleChildScrollView(
+          child: Form(
         key: _formKey,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -187,6 +236,19 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
             const Text("Izmjena profila",
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
+            Center(
+                child: _ProfileAvatar(imageUrl: _imageUrl, name: _first.text)),
+            Wrap(alignment: WrapAlignment.center, children: [
+              TextButton(
+                  onPressed: _busy || _picking ? null : _pickImage,
+                  child: const Text("Odaberi sliku")),
+              if (_imageUrl != null)
+                TextButton(
+                    onPressed: _busy || _picking
+                        ? null
+                        : () => setState(() => _imageUrl = null),
+                    child: const Text("Ukloni sliku")),
+            ]),
             TextFormField(
               controller: _first,
               decoration: const InputDecoration(labelText: "Ime"),
@@ -202,18 +264,32 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                   : null,
             ),
             const SizedBox(height: 12),
+            if (_cityLoadFailed)
+              TextButton(
+                  onPressed: _loadCities,
+                  child:
+                      const Text("Gradovi se nisu učitali. Pokušaj ponovo.")),
             DropdownButtonFormField<int>(
+              key: ValueKey(_citiesReady),
               initialValue: _cityId,
+              validator: (value) => _cityName != null && value == null
+                  ? "Odaberite postojeći grad."
+                  : null,
               decoration: const InputDecoration(labelText: "Grad"),
               items: _cities
-                  .map((c) =>
-                      DropdownMenuItem(value: c.id, child: Text(c.name)))
+                  .map(
+                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name)))
                   .toList(),
-              onChanged: (v) => setState(() => _cityId = v),
+              onChanged: !_citiesReady || _busy
+                  ? null
+                  : (v) => setState(() => _cityId = v),
             ),
             const SizedBox(height: 20),
             ElevatedButton(
-              onPressed: _busy ? null : _save,
+              onPressed:
+                  _busy || _picking || (!_citiesReady && _cityName != null)
+                      ? null
+                      : _save,
               style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14)),
               child: _busy
@@ -225,8 +301,45 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
             ),
           ],
         ),
-      ),
+      )),
     );
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({required this.imageUrl, required this.name});
+
+  final String? imageUrl;
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Center(
+        child: Text(name.isEmpty ? "?" : name[0].toUpperCase(),
+            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)));
+    final url = imageUrl;
+    Widget image = fallback;
+    if (url != null && url.isNotEmpty) {
+      try {
+        final uri = Uri.parse(url);
+        if (uri.scheme == "data") {
+          image = Image.memory(uri.data!.contentAsBytes(),
+              fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+        } else if (uri.scheme == "https" || uri.scheme == "http") {
+          image = Image.network(url,
+              fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback);
+        }
+      } on FormatException {
+        image = fallback;
+      }
+    }
+    return ClipOval(
+        child: Container(
+      color: AppColors.primary.withValues(alpha: 0.15),
+      width: 88,
+      height: 88,
+      child: image,
+    ));
   }
 }
 
@@ -256,9 +369,7 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      await context
-          .read<ApiService>()
-          .changePassword(_current.text, _new.text);
+      await context.read<ApiService>().changePassword(_current.text, _new.text);
       if (mounted) {
         Navigator.pop(context);
         showOk(context, "Lozinka je uspjesno promijenjena.");

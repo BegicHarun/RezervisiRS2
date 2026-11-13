@@ -22,6 +22,19 @@ class ApiService {
     return AuthResponse.fromJson(j);
   }
 
+  Future<void> requestPasswordReset(String email) async {
+    await _api.post("/auth/password-reset/request", body: {"email": email});
+  }
+
+  Future<void> resetPassword(
+      String email, String token, String password) async {
+    await _api.post("/auth/password-reset/confirm", body: {
+      "email": email,
+      "token": token,
+      "newPassword": password,
+    });
+  }
+
   // ---- Saloni ----
   Future<PagedResult<SalonDto>> getSalons(
       {int page = 1, int pageSize = 20, String? search, int? cityId}) async {
@@ -63,8 +76,8 @@ class ApiService {
   }
 
   // ---- Referentni podaci ----
-  Future<PagedResult<CityDto>> getCities() async {
-    final j = await _api.get("/cities", query: {"pageSize": 100});
+  Future<PagedResult<CityDto>> getCities({int page = 1}) async {
+    final j = await _api.get("/cities", query: {"page": page, "pageSize": 100});
     return PagedResult.fromJson(j, CityDto.fromJson);
   }
 
@@ -79,6 +92,9 @@ class ApiService {
   }
 
   // ---- Rezervacije ----
+  Future<ReservationDto> getReservation(int id) async =>
+      ReservationDto.fromJson(await _api.get("/reservations/$id"));
+
   Future<PagedResult<ReservationDto>> getMyReservations(
       {int page = 1, int pageSize = 50}) async {
     final j = await _api
@@ -121,8 +137,8 @@ class ApiService {
   // ---- Placanje (PayPal) ----
   /// Kreira PayPal narudzbu za rezervaciju. Vraca {paymentId, orderId, approveUrl}.
   Future<Map<String, dynamic>> createPaymentOrder(int reservationId) async {
-    final j = await _api
-        .post("/payments/reservation/$reservationId/create-order");
+    final j =
+        await _api.post("/payments/reservation/$reservationId/create-order");
     return j as Map<String, dynamic>;
   }
 
@@ -183,7 +199,8 @@ class ApiService {
     return UserDto.fromJson(j);
   }
 
-  Future<void> changePassword(String currentPassword, String newPassword) async {
+  Future<void> changePassword(
+      String currentPassword, String newPassword) async {
     await _api.post("/profile/change-password", body: {
       "currentPassword": currentPassword,
       "newPassword": newPassword,

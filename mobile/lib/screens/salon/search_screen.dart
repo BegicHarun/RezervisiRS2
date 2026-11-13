@@ -19,6 +19,12 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _loading = false;
   List<SalonDto> _results = [];
   int _total = 0;
+  int _page = 1;
+  int _pages = 0;
+  int _request = 0;
+  int _requestedPage = 1;
+  String _submitted = "";
+  Object? _error;
 
   @override
   void initState() {
@@ -36,26 +42,42 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _loadCities() async {
     try {
       final res = await context.read<ApiService>().getCities();
-      setState(() => _cities = res.items);
-    } catch (_) {}
+      if (mounted) setState(() => _cities = res.items);
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
   }
 
-  Future<void> _doSearch() async {
-    setState(() => _loading = true);
+  Future<void> _doSearch() {
+    _submitted = _search.text.trim();
+    return _loadPage(1);
+  }
+
+  Future<void> _loadPage(int page) async {
+    final request = ++_request;
+    _requestedPage = page;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final res = await context.read<ApiService>().getSalons(
-            search: _search.text.trim().isEmpty ? null : _search.text.trim(),
+            search: _submitted.isEmpty ? null : _submitted,
+            page: page,
             cityId: _cityId,
             pageSize: 50,
           );
+      if (!mounted || request != _request) return;
       setState(() {
+        _page = res.page;
+        _pages = res.totalPages;
         _results = res.items;
         _total = res.totalCount;
       });
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && request == _request) setState(() => _error = e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
@@ -118,18 +140,41 @@ class _SearchScreenState extends State<SearchScreen> {
             Expanded(
               child: _loading
                   ? const LoadingView()
-                  : _results.isEmpty
-                      ? const EmptyView("Nema rezultata",
-                          icon: Icons.search_off)
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _results.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, i) =>
-                              SalonCard(salon: _results[i]),
-                        ),
+                  : _error != null
+                      ? Center(
+                          child: TextButton(
+                              onPressed: () => _loadPage(_requestedPage),
+                              child: Text("PokuÅ¡aj ponovo: $_error")))
+                      : _results.isEmpty
+                          ? const EmptyView("Nema rezultata",
+                              icon: Icons.search_off)
+                          : ListView.separated(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: _results.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 12),
+                              itemBuilder: (context, i) =>
+                                  SalonCard(salon: _results[i]),
+                            ),
             ),
+            if (_pages > 1 && _error == null)
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                IconButton(
+                  tooltip: "Prethodna stranica",
+                  onPressed: _loading || _page <= 1
+                      ? null
+                      : () => _loadPage(_page - 1),
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                Text("$_page / $_pages"),
+                IconButton(
+                  tooltip: "SljedeÄ‡a stranica",
+                  onPressed: _loading || _page >= _pages
+                      ? null
+                      : () => _loadPage(_page + 1),
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ]),
           ],
         ),
       ),

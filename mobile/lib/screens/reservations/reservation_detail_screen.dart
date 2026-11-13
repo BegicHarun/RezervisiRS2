@@ -27,26 +27,33 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   }
 
   Future<void> _cancel() async {
-    final reasonController = TextEditingController();
+    final form = GlobalKey<FormState>();
+    String reason = "";
     // Otkazivanje je nepovratno -> confirmation dialog (uputa 6.3).
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Otkazivanje rezervacije"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-                "Ova radnja je nepovratna. Rezervacija ce biti otkazana."),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                  labelText: "Razlog otkazivanja (obavezno)"),
-              maxLines: 2,
-            ),
-          ],
-        ),
+        content: Form(
+            key: form,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                    "Ova radnja je nepovratna. Rezervacija ce biti otkazana."),
+                const SizedBox(height: 12),
+                TextFormField(
+                  onChanged: (value) => reason = value.trim(),
+                  validator: (value) => (value?.trim().isEmpty ?? true)
+                      ? "Unesite razlog otkazivanja."
+                      : null,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                      labelText: "Razlog otkazivanja (obavezno)"),
+                  maxLines: 2,
+                ),
+              ],
+            )),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -54,7 +61,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
             onPressed: () {
-              if (reasonController.text.trim().isEmpty) return;
+              if (!form.currentState!.validate()) return;
               Navigator.pop(ctx, true);
             },
             child: const Text("Otkazi rezervaciju"),
@@ -63,15 +70,15 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       ),
     );
 
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
 
     setState(() => _busy = true);
     try {
-      final updated = await context
-          .read<ApiService>()
-          .cancelReservation(_r.id, reasonController.text.trim());
+      final updated =
+          await context.read<ApiService>().cancelReservation(_r.id, reason);
+      if (!mounted) return;
       setState(() => _r = updated);
-      if (mounted) showOk(context, "Rezervacija otkazana.");
+      showOk(context, "Rezervacija otkazana.");
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
@@ -102,7 +109,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
 
     setState(() => _busy = true);
     try {
@@ -119,7 +126,8 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       if (!mounted) return;
       final approved = await Navigator.push<bool>(
         context,
-        MaterialPageRoute(builder: (_) => PaymentScreen(approveUrl: approveUrl)),
+        MaterialPageRoute(
+            builder: (_) => PaymentScreen(approveUrl: approveUrl)),
       );
 
       if (approved != true) {
@@ -130,25 +138,10 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       // 3) Potvrdi (capture) placanje na serveru - server-side verifikacija.
       final result = await api.capturePayment(orderId);
       if (result["status"] == "Completed") {
-        if (mounted) showOk(context, "Placanje uspjesno!");
-        // Osvjezi rezervaciju da se vidi "Placeno".
-        setState(() => _r = ReservationDto(
-              id: _r.id,
-              clientId: _r.clientId,
-              clientName: _r.clientName,
-              hairdresserId: _r.hairdresserId,
-              hairdresserName: _r.hairdresserName,
-              serviceId: _r.serviceId,
-              serviceName: _r.serviceName,
-              salonName: _r.salonName,
-              startTime: _r.startTime,
-              endTime: _r.endTime,
-              price: _r.price,
-              status: _r.status,
-              statusReason: _r.statusReason,
-              canReview: _r.canReview,
-              isPaid: true,
-            ));
+        final updated = await api.getReservation(_r.id);
+        if (!mounted) return;
+        setState(() => _r = updated);
+        showOk(context, "Plaćanje je potvrđeno.");
       } else {
         if (mounted) showError(context, "Placanje nije uspjelo.");
       }
@@ -223,7 +216,8 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                 child: ElevatedButton.icon(
                   onPressed: _busy ? null : _pay,
                   icon: const Icon(Icons.payment),
-                  label: Text("Plati ${_r.price.toStringAsFixed(2)} USD (PayPal)"),
+                  label:
+                      Text("Plati ${_r.price.toStringAsFixed(2)} USD (PayPal)"),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0070BA), // PayPal plava
                       padding: const EdgeInsets.symmetric(vertical: 14)),
@@ -246,10 +240,16 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                   final done = await Navigator.push<bool>(
                       context,
                       MaterialPageRoute(
-                          builder: (_) =>
-                              ReviewScreen(reservation: _r)));
-                  if (done == true && mounted) {
+                          builder: (_) => ReviewScreen(reservation: _r)));
+                  if (done != true || !context.mounted) return;
+                  try {
+                    final updated =
+                        await context.read<ApiService>().getReservation(_r.id);
+                    if (!context.mounted) return;
+                    setState(() => _r = updated);
                     showOk(context, "Hvala na recenziji!");
+                  } catch (error) {
+                    if (context.mounted) showError(context, error);
                   }
                 },
                 icon: const Icon(Icons.star_outline),
@@ -275,8 +275,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
           children: [
             Icon(icon, size: 20, color: AppColors.textSecondary),
             const SizedBox(width: 12),
-            Text(label,
-                style: const TextStyle(color: AppColors.textSecondary)),
+            Text(label, style: const TextStyle(color: AppColors.textSecondary)),
             const Spacer(),
             Flexible(
               child: Text(value,

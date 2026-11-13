@@ -15,6 +15,11 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   late Future<List<ReservationDto>> _future;
+  int _page = 1;
+  bool _hasMore = false;
+  bool _loadingMore = false;
+  int _revision = 0;
+  List<ReservationDto> _items = [];
 
   @override
   void initState() {
@@ -23,13 +28,46 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<List<ReservationDto>> _load() async {
-    final res = await context.read<ApiService>().getMyReservations();
-    return res.items;
+    final revision = ++_revision;
+    final result = await context.read<ApiService>().getMyReservations(page: 1);
+    if (mounted && revision == _revision) {
+      _page = 1;
+      _hasMore = result.page < result.totalPages;
+      _items = result.items;
+    }
+    return result.items;
   }
 
   Future<void> _refresh() async {
-    setState(() { _future = _load(); });
-    await _future;
+    setState(() => _future = _load());
+    try {
+      await _future;
+    } catch (_) {
+      // The FutureBuilder displays the failure and offers a retry.
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+    final revision = _revision;
+    setState(() => _loadingMore = true);
+    try {
+      final result =
+          await context.read<ApiService>().getMyReservations(page: _page + 1);
+      if (!mounted || revision != _revision) return;
+      final rows = {
+        for (final item in [..._items, ...result.items]) item.id: item
+      };
+      setState(() {
+        _items = rows.values.toList();
+        _page = result.page;
+        _hasMore = result.page < result.totalPages;
+      });
+    } catch (error) {
+      if (mounted && revision == _revision) showError(context, error);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
   }
 
   @override
@@ -48,14 +86,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
               if (snap.hasError) {
                 return ListView(children: [
                   const SizedBox(height: 160),
-                  Center(child: Text("Greska: ${snap.error}")),
+                  TextButton(
+                      onPressed: _refresh,
+                      child: const Text(
+                          "Učitavanje nije uspjelo. Pokušaj ponovo.")),
                 ]);
               }
-              final all = snap.data!;
+              final all = _items;
               final completed =
                   all.where((r) => r.status == "Completed").toList();
-              final totalSpent =
-                  completed.fold<double>(0, (sum, r) => sum + r.price);
+              final totalSpent = completed
+                  .where((r) => r.isPaid)
+                  .fold<double>(0, (sum, r) => sum + r.price);
 
               // Grupisanje po mjesecu.
               final byMonth = <String, List<ReservationDto>>{};
@@ -66,18 +108,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
               }
 
               return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(16),
                 children: [
                   Row(
                     children: [
                       _StatCard(
-                          label: "Posjeta",
+                          label: "Učitane posjete",
                           value: "${completed.length}",
                           icon: Icons.check_circle_outline),
                       const SizedBox(width: 12),
                       _StatCard(
-                          label: "Potroseno",
-                          value: "${totalSpent.toStringAsFixed(0)} KM",
+                          label: "Plaćeno za učitane posjete",
+                          value: "${totalSpent.toStringAsFixed(2)} USD",
                           icon: Icons.payments_outlined),
                     ],
                   ),
@@ -85,7 +128,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   if (completed.isEmpty)
                     const Padding(
                       padding: EdgeInsets.only(top: 80),
-                      child: EmptyView("Jos nema zavrsenih termina.",
+                      child: EmptyView(
+                          "Nema završenih termina na učitanim stranicama.",
                           icon: Icons.history),
                     )
                   else
@@ -100,6 +144,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           ...e.value.map((r) => _HistoryRow(
                               reservation: r, onReviewed: _refresh)),
                         ]),
+                  if (_hasMore)
+                    TextButton(
+                      onPressed: _loadingMore ? null : _loadMore,
+                      child: Text(_loadingMore
+                          ? "Učitavanje…"
+                          : "Učitaj starije rezervacije"),
+                    ),
                 ],
               );
             },
@@ -130,8 +181,8 @@ class _StatCard extends StatelessWidget {
             Icon(icon, color: AppColors.primary),
             const SizedBox(height: 8),
             Text(value,
-                style: const TextStyle(
-                    fontSize: 22, fontWeight: FontWeight.bold)),
+                style:
+                    const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             Text(label,
                 style: const TextStyle(
                     color: AppColors.textSecondary, fontSize: 12)),
@@ -145,8 +196,7 @@ class _StatCard extends StatelessWidget {
 class _HistoryRow extends StatelessWidget {
   final ReservationDto reservation;
   final VoidCallback onReviewed;
-  const _HistoryRow(
-      {required this.reservation, required this.onReviewed});
+  const _HistoryRow({required this.reservation, required this.onReviewed});
 
   @override
   Widget build(BuildContext context) {
@@ -165,7 +215,8 @@ class _HistoryRow extends StatelessWidget {
                 Text(reservation.serviceName,
                     style: const TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
-                Text("${reservation.salonName} · ${df.format(reservation.startTime)}",
+                Text(
+                    "${reservation.salonName} Â· ${df.format(reservation.startTime)}",
                     style: const TextStyle(
                         fontSize: 12, color: AppColors.textSecondary)),
               ],

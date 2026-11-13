@@ -4,6 +4,8 @@ class PagedResult<T> {
   final int page;
   final int pageSize;
 
+  int get totalPages => pageSize > 0 ? (totalCount / pageSize).ceil() : 0;
+
   PagedResult({
     required this.items,
     required this.totalCount,

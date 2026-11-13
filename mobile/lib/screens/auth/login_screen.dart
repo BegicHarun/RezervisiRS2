@@ -4,6 +4,7 @@ import "../../providers/auth_provider.dart";
 import "../../theme/app_theme.dart";
 import "../../widgets/common.dart";
 import "register_screen.dart";
+import "password_reset_screen.dart";
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,8 +13,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _username = TextEditingController(text: "mobile");
-  final _password = TextEditingController(text: "Test1234!");
+  final _username = TextEditingController();
+  final _password = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -36,7 +37,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final loading = context.watch<AuthProvider>().loading;
+    final auth = context.watch<AuthProvider>();
+    final loading = auth.loading;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -61,13 +63,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: TextStyle(color: AppColors.textSecondary)),
                   const SizedBox(height: 32),
+                  if (auth.sessionExpired)
+                    const Text("Sesija je istekla. Prijavite se ponovo."),
                   TextFormField(
                     controller: _username,
                     decoration: const InputDecoration(
                         labelText: "Korisnicko ime",
                         prefixIcon: Icon(Icons.person_outline)),
-                    validator: (v) =>
-                        (v == null || v.isEmpty) ? "Unesite korisnicko ime" : null,
+                    validator: (v) => (v == null || v.isEmpty)
+                        ? "Unesite korisnicko ime"
+                        : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -91,6 +96,15 @@ class _LoginScreenState extends State<LoginScreen> {
                         : const Text("Prijava"),
                   ),
                   const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: loading
+                        ? null
+                        : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const PasswordResetScreen())),
+                    child: const Text("Zaboravljena lozinka"),
+                  ),
                   TextButton(
                     onPressed: loading
                         ? null

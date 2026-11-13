@@ -30,7 +30,7 @@ class _RootScaffoldState extends State<RootScaffold> {
     super.initState();
     // Startaj polling notifikacija (auto-refresh badge).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<NotificationsProvider>().startPolling();
+      if (mounted) context.read<NotificationsProvider>().startPolling();
     });
   }
 
@@ -57,8 +57,8 @@ class _RootScaffoldState extends State<RootScaffold> {
               selectedIcon: Icon(Icons.history),
               label: "Historija"),
           NavigationDestination(
-              icon: _BadgeIcon(
-                  icon: Icons.notifications_outlined, count: unread),
+              icon:
+                  _BadgeIcon(icon: Icons.notifications_outlined, count: unread),
               selectedIcon:
                   _BadgeIcon(icon: Icons.notifications, count: unread),
               label: "Obavijesti"),
