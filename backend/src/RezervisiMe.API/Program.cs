@@ -1,3 +1,6 @@
+using Microsoft.AspNetCore.DataProtection;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using System.Text;
 using DotNetEnv;
@@ -40,6 +43,15 @@ builder.Services
     })
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders();
+builder.Services.Configure<DataProtectionTokenProviderOptions>(options =>
+    options.TokenLifespan = TimeSpan.FromMinutes(30));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("password-reset", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(15) }));
+});
 
 // ---- JWT autentifikacija ----
 builder.Services.AddSingleton(jwtSettings);
@@ -95,6 +107,10 @@ builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 // ---- Servisi (svi Scoped - koriste DbContext) ----
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<NotificationOutbox>();
+var dataProtection = builder.Services.AddDataProtection().SetApplicationName("RezervisiMe");
+if (Environment.GetEnvironmentVariable("DATA_PROTECTION_KEY_PATH") is { Length: > 0 } keyPath)
+    dataProtection.PersistKeysToFileSystem(Directory.CreateDirectory(keyPath));
 builder.Services.AddScoped<ISalonService, SalonService>();
 builder.Services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
 builder.Services.AddScoped<IReservationService, ReservationService>();
@@ -112,9 +128,8 @@ builder.Services.AddScoped<IRecommenderService, RecommenderService>();
 // ---- Message publisher (RabbitMQ ako je konfigurisan, inace no-op) ----
 if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RABBITMQ_HOST")))
 {
-    builder.Services.AddSingleton<IMessagePublisher>(sp =>
-        RabbitMqPublisher.CreateAsync(
-            sp.GetRequiredService<ILogger<RabbitMqPublisher>>()).GetAwaiter().GetResult());
+    builder.Services.AddSingleton<IMessagePublisher, RabbitMqPublisher>();
+    builder.Services.AddHostedService<NotificationOutboxWorker>();
 }
 else
 {
@@ -155,10 +170,8 @@ var app = builder.Build();
 // ---- Migracija + osnovni seed (nalozi, 1 salon) - blokirajuce, nuzno za login ----
 await DbSeeder.SeedAsync(app.Services);
 
-// ---- Dodatni demo seed (6 salona + recenzije) - U POZADINI ----
-// Ne blokira start API-ja; puni se nakon sto se web server digne. Ako zakaze,
-// aplikacija svejedno radi (osnovni podaci su vec tu).
-_ = Task.Run(() => DbSeeder.SeedExtraInBackgroundAsync(app.Services));
+// ---- Dodatni demo podaci prije prihvatanja zahtjeva ----
+await DbSeeder.SeedExtraInBackgroundAsync(app.Services);
 
 // ---- Pipeline ----
 app.UseMiddleware<ExceptionMiddleware>();
@@ -169,8 +182,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseRouting();
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 

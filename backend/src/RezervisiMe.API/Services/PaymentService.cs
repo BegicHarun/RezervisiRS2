@@ -26,21 +26,15 @@ public class PaymentService : IPaymentService
     private readonly ApplicationDbContext _db;
     private readonly IPayPalClient _paypal;
     private readonly ICurrentUser _currentUser;
+    private readonly NotificationOutbox _outbox;
     private const string Currency = "USD";
 
-    /// <summary>
-    /// True ako aplikacija radi u PayPal sandbox modu. Sandbox fallback vrijedi samo ovdje;
-    /// u produkciji (PAYPAL_MODE=live) nikad.
-    /// </summary>
-    private static bool IsSandbox =>
-        !string.Equals(Environment.GetEnvironmentVariable("PAYPAL_MODE"), "live",
-            StringComparison.OrdinalIgnoreCase);
-
-    public PaymentService(ApplicationDbContext db, IPayPalClient paypal, ICurrentUser currentUser)
+    public PaymentService(ApplicationDbContext db, IPayPalClient paypal, ICurrentUser currentUser, NotificationOutbox outbox)
     {
         _db = db;
         _paypal = paypal;
         _currentUser = currentUser;
+        _outbox = outbox;
     }
 
     public async Task<CreatePaymentResponse> CreateForReservationAsync(int reservationId)
@@ -48,6 +42,8 @@ public class PaymentService : IPaymentService
         if (!_paypal.IsConfigured)
             throw new ValidationException("PayPal nije konfigurisan na serveru (PAYPAL_CLIENT_ID/SECRET).");
 
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await ReservationLock.AcquireAsync(_db, reservationId);
         var reservation = await _db.Reservations
             .Include(r => r.Service)
             .FirstOrDefaultAsync(r => r.Id == reservationId)
@@ -64,8 +60,16 @@ public class PaymentService : IPaymentService
         var existing = await _db.Payments.FirstOrDefaultAsync(p => p.ReservationId == reservationId);
 
         // Idempotentno: vec placeno -> ne dozvoli ponovno placanje (upute 7.1).
-        if (existing is not null && existing.Status == PaymentStatus.Completed)
+        if (existing is not null && existing.Status is PaymentStatus.Completed or PaymentStatus.Refunded)
             throw new ConflictException("Rezervacija je vec placena.");
+
+        if (existing is { Status: PaymentStatus.Created, ProviderOrderId: { } existingOrderId })
+        {
+            var pending = await _paypal.GetOrderAsync(existingOrderId);
+            if (pending.ApproveUrl is not null && pending.Status is "CREATED" or "PAYER_ACTION_REQUIRED" or "APPROVED")
+                return new CreatePaymentResponse { PaymentId = existing.Id, OrderId = existingOrderId, ApproveUrl = pending.ApproveUrl };
+            throw new ConflictException("Postojeca PayPal narudzba zahtijeva provjeru statusa.");
+        }
 
         // Kreiraj PayPal narudzbu. Iznos = cijena rezervacije (sa servera).
         var baseUrl = Environment.GetEnvironmentVariable("PAYPAL_RETURN_BASE")
@@ -96,6 +100,7 @@ public class PaymentService : IPaymentService
             existing.Amount = reservation.Price;
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return new CreatePaymentResponse
         {
@@ -107,6 +112,11 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDto> CaptureAsync(string orderId)
     {
+        var reservationId = await _db.Payments.AsNoTracking()
+            .Where(p => p.ProviderOrderId == orderId).Select(p => (int?)p.ReservationId).FirstOrDefaultAsync()
+            ?? throw new NotFoundException("Placanje za order", 0);
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await ReservationLock.AcquireAsync(_db, reservationId);
         var payment = await _db.Payments
             .Include(p => p.Reservation)
             .FirstOrDefaultAsync(p => p.ProviderOrderId == orderId)
@@ -119,24 +129,17 @@ public class PaymentService : IPaymentService
         if (payment.Status == PaymentStatus.Completed)
             return Map(payment);
 
+        if (payment.Reservation.Status == ReservationStatus.Cancelled || payment.Status == PaymentStatus.Refunded)
+            throw new ConflictException("Ovo placanje vise nije dostupno.");
+
         // Server-side verifikacija: PayPal capture.
         var capture = await _paypal.CaptureOrderAsync(orderId);
 
-        if (capture.Status is "COMPLETED")
+        if (capture.Status is "COMPLETED" && !string.IsNullOrWhiteSpace(capture.CaptureId)
+            && capture.Amount == payment.Amount && capture.Currency == payment.Currency)
         {
             payment.Status = PaymentStatus.Completed;
             payment.ProviderCaptureId = capture.CaptureId;
-            payment.CompletedAt = DateTime.UtcNow;
-        }
-        else if (capture.Status is "COMPLIANCE_VIOLATION" && IsSandbox)
-        {
-            // SANDBOX FALLBACK (samo za demo/odbranu):
-            // PayPal sandbox test racuni cesto vracaju COMPLIANCE_VIOLATION na capture,
-            // iako je order kreiran i korisnik ga je stvarno odobrio. To je ogranicenje
-            // sandbox okruzenja, ne naseg koda. U PRODUKCIJI (PAYPAL_MODE=live) ovaj grana
-            // se NIKADA ne izvrsava - tamo vrijedi iskljucivo pravi PayPal capture.
-            payment.Status = PaymentStatus.Completed;
-            payment.ProviderCaptureId = "SANDBOX-FALLBACK";
             payment.CompletedAt = DateTime.UtcNow;
         }
         else
@@ -152,6 +155,7 @@ public class PaymentService : IPaymentService
         if (payment.Status == PaymentStatus.Completed &&
             payment.Reservation.Status == ReservationStatus.Pending)
         {
+            ReservationStateMachine.EnsureTransition(payment.Reservation.Status, ReservationStatus.Confirmed);
             payment.Reservation.Status = ReservationStatus.Confirmed;
             _db.AuditLogs.Add(new AuditLog
             {
@@ -163,7 +167,11 @@ public class PaymentService : IPaymentService
             });
         }
 
+        if (payment.Status == PaymentStatus.Completed)
+            await AddNotificationAsync(payment.Reservation.ClientId, "Placanje potvrdjeno", "PayPal naplata je potvrdjena.");
+
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Map(payment);
     }
 
@@ -176,22 +184,38 @@ public class PaymentService : IPaymentService
 
     public async Task<PaymentDto> RefundAsync(int reservationId)
     {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await ReservationLock.AcquireAsync(_db, reservationId);
         var payment = await _db.Payments
             .FirstOrDefaultAsync(p => p.ReservationId == reservationId)
             ?? throw new NotFoundException("Placanje", reservationId);
+
+        if (payment.Status == PaymentStatus.Refunded) return Map(payment);
 
         if (payment.Status != PaymentStatus.Completed || string.IsNullOrEmpty(payment.ProviderCaptureId))
             throw new ConflictException("Moguce je refundirati samo uspjesno placanje.");
 
         // Refund na osnovu STVARNO naplacenog iznosa (upute 7.1).
         var status = await _paypal.RefundCaptureAsync(payment.ProviderCaptureId, payment.Amount, payment.Currency);
-        if (status is "COMPLETED" or "PENDING")
+        if (status is "COMPLETED")
         {
             payment.Status = PaymentStatus.Refunded;
             payment.RefundedAt = DateTime.UtcNow;
+            var clientId = await _db.Reservations.Where(r => r.Id == reservationId)
+                .Select(r => r.ClientId).SingleAsync();
+            await AddNotificationAsync(clientId, "Povrat zavrsen", "PayPal je potvrdio povrat sredstava.");
             await _db.SaveChangesAsync();
+            await tx.CommitAsync();
         }
         return Map(payment);
+    }
+
+    private async Task AddNotificationAsync(int userId, string title, string text)
+    {
+        _db.Notifications.Add(new Notification { UserId = userId, Title = title, Text = text });
+        var email = await _db.Users.Where(u => u.Id == userId).Select(u => u.Email).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(email))
+            _outbox.Enqueue(new NotificationMessage(userId, email, title, text));
     }
 
     private static PaymentDto Map(Payment p) => new()

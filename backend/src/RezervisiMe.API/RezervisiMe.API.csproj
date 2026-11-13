@@ -36,6 +36,7 @@
 
     <!-- PDF izvjestaji (7.8). QuestPDF Community licenca za edukativne/manje projekte. -->
     <PackageReference Include="QuestPDF" Version="2024.12.3" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
   </ItemGroup>
 
 </Project>

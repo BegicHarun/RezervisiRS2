@@ -16,8 +16,8 @@ public class HairdressersController : ControllerBase
 
     /// <summary>Frizeri jednog salona (verifikovani). Koristi mobilna app pri rezervaciji.</summary>
     [HttpGet("salon/{salonId:int}")]
-    public async Task<ActionResult<IReadOnlyList<HairdresserDto>>> ForSalon(int salonId)
-        => Ok(await _hairdressers.GetForSalonAsync(salonId));
+    public async Task<ActionResult<IReadOnlyList<HairdresserDto>>> ForSalon(int salonId, [FromQuery] PagedQuery query)
+        => Ok(await _hairdressers.GetForSalonAsync(salonId, query));
 
     [HttpGet]
     public async Task<ActionResult<PagedResult<HairdresserDto>>> Get(

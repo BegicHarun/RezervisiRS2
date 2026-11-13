@@ -70,6 +70,19 @@ public class ServiceCatalogService : IServiceCatalogService
             .Select(s => Map(s))
             .ToListAsync();
 
+        if (categoryId is not null || !string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search?.Trim();
+            _db.SearchHistory.Add(new SearchHistory
+            {
+                UserId = _currentUser.Id,
+                ServiceCategoryId = categoryId is { } category && await _db.ServiceCategories.AnyAsync(c => c.Id == category)
+                    ? category : null,
+                SearchTerm = term is { Length: > 200 } ? term[..200] : term
+            });
+            await _db.SaveChangesAsync();
+        }
+
         return new PagedResult<ServiceDto>
         { Items = items, TotalCount = total, Page = query.Page, PageSize = query.PageSize };
     }

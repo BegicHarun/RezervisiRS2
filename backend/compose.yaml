@@ -1,0 +1,55 @@
+services:
+  sql:
+    image: ${SQL_IMAGE:-mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04}
+    platform: ${SQL_PLATFORM:-linux/amd64}
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Set SQL_SA_PASSWORD in backend/.env}
+    volumes:
+      - sql-data:/var/opt/mssql
+  rabbitmq:
+    image: rabbitmq:4.1.8-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in backend/.env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in backend/.env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  api:
+    build:
+      context: .
+      dockerfile: src/RezervisiMe.API/Dockerfile
+    env_file: ${REZERVISIME_ENV_FILE:-.env}
+    environment:
+      DATA_PROTECTION_KEY_PATH: /var/rezervisime/keys
+      CONNECTION_STRING: "Server=sql;Database=220008;User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=True"
+      RABBITMQ_HOST: rabbitmq
+    volumes:
+      - api-keys:/var/rezervisime/keys
+    ports:
+      - "127.0.0.1:5126:8080"
+    depends_on:
+      sql:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+  worker:
+    build:
+      context: .
+      dockerfile: src/RezervisiMe.Worker/Dockerfile
+    env_file: ${REZERVISIME_ENV_FILE:-.env}
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+volumes:
+  sql-data:
+  rabbitmq-data:
+  api-keys:

@@ -10,7 +10,7 @@ namespace RezervisiMe.API.Services;
 
 public interface IHairdresserService
 {
-    Task<IReadOnlyList<HairdresserDto>> GetForSalonAsync(int salonId);
+    Task<IReadOnlyList<HairdresserDto>> GetForSalonAsync(int salonId, PagedQuery query);
     Task<PagedResult<HairdresserDto>> GetAsync(PagedQuery query, int? salonId);
     Task<HairdresserDto> CreateAsync(HairdresserUpsertRequest req);
     Task<HairdresserDto> CreateWithAccountAsync(HairdresserAccountRequest req);
@@ -45,13 +45,17 @@ public class HairdresserServiceImpl : IHairdresserService
     private static readonly string[] DayNames =
         { "Nedjelja", "Ponedjeljak", "Utorak", "Srijeda", "Cetvrtak", "Petak", "Subota" };
 
-    public async Task<IReadOnlyList<HairdresserDto>> GetForSalonAsync(int salonId)
+    public async Task<IReadOnlyList<HairdresserDto>> GetForSalonAsync(int salonId, PagedQuery query)
     {
-        return await _db.Hairdressers.AsNoTracking()
+        var hairdressers = _db.Hairdressers.AsNoTracking()
             .Where(h => h.SalonId == salonId &&
                         h.VerificationStatus == VerificationStatus.Approved)
             .Include(h => h.User)
-            .Include(h => h.Salon)
+            .Include(h => h.Salon);
+        var filtered = string.IsNullOrWhiteSpace(query.Search) ? hairdressers
+            : hairdressers.Where(h => h.User.FirstName.Contains(query.Search) ||
+                h.User.LastName.Contains(query.Search) || h.Specialization.Contains(query.Search));
+        return await filtered.OrderBy(h => h.Id).Skip(query.Skip).Take(query.PageSize)
             .Select(h => Map(h))
             .ToListAsync();
     }
@@ -130,11 +134,13 @@ public class HairdresserServiceImpl : IHairdresserService
             EmailConfirmed = true
         };
 
+        await using var transaction = await _db.Database.BeginTransactionAsync();
         var result = await _userManager.CreateAsync(user, req.Password);
         if (!result.Succeeded)
             throw new ValidationException(result.Errors.Select(e => e.Description));
 
-        await _userManager.AddToRoleAsync(user, Roles.Frizer);
+        var role = await _userManager.AddToRoleAsync(user, Roles.Frizer);
+        if (!role.Succeeded) throw new ValidationException(role.Errors.Select(e => e.Description));
 
         var h = new Hairdresser
         {
@@ -146,6 +152,7 @@ public class HairdresserServiceImpl : IHairdresserService
         };
         _db.Hairdressers.Add(h);
         await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         var created = await _db.Hairdressers.AsNoTracking()
             .Include(x => x.User).Include(x => x.Salon)

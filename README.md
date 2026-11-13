@@ -25,19 +25,20 @@ Sistem se sastoji od tri dijela:
 
 Preduslov: instaliran Docker Desktop.
 
-1. U root folderu projekta (gdje je `docker-compose.yml`) treba postojati `.env` fajl.
+1. U folderu `backend` (gdje je `compose.yaml`) treba postojati `.env` fajl.
    Za pregled rada, otpakuj priloženi `.env-tajne.zip` (šifra je dostavljena na DLWMS)
-   u isti folder i preimenuj u `.env`.
+   u isti folder i preimenuj u `.env`. Uskladi nazive postavki s `.env.example`, uključujući `SQL_SA_PASSWORD` i RabbitMQ korisnika različitog od `guest`.
 
 2. Pokreni sve servise jednom komandom:
 
    ```
+   cd backend
    docker compose up --build
    ```
 
 3. Nakon pokretanja:
    - API / Swagger: `http://localhost:5126/swagger`
-   - RabbitMQ UI: `http://localhost:15672` (guest/guest)
+   - RabbitMQ UI: `http://localhost:15672` (korisnik i lozinka iz `.env`)
 
    Baza se automatski kreira i puni početnim podacima (migracije + seed) pri pokretanju API-ja.
    SQL Server-u treba ~20-30 s da se digne; API ima retry pa sačeka bazu.
@@ -100,3 +101,7 @@ Opis recommender sistema (content-based + popularity-based) nalazi se u fajlu
 - Plaćanje koristi stvarno PayPal sandbox okruženje (nije simulirano), sa refund logikom.
 - Email notifikacije: dok je `SMTP_HOST=smtp.example.com`, Worker radi u DEV režimu i samo logira email
   (vidljivo u `docker compose logs worker`). Za pravi email upiši stvarne SMTP podatke u `.env`.
+
+Ako raniji RabbitMQ volumen već ima red `notifications` bez dead-letter konfiguracije,
+prije prelaska prebaciti ili obraditi poruke iz postojećeg reda i ponovo ga kreirati s novom
+konfiguracijom. Neuspješne poruke završavaju u redu `notifications.failed`.

@@ -71,4 +71,27 @@ public class ReferenceController : ControllerBase
     [HttpGet("tags")]
     public async Task<ActionResult<IReadOnlyList<TagDto>>> GetTags()
         => Ok(await _reference.GetTagsAsync());
+
+    [Authorize(Roles = Roles.Administrator)]
+    [HttpGet("tags/manage")]
+    public async Task<ActionResult<PagedResult<TagDto>>> GetTagPage([FromQuery] PagedQuery query)
+        => Ok(await _reference.GetTagPageAsync(query));
+
+    [Authorize(Roles = Roles.Administrator)]
+    [HttpPost("tags")]
+    public async Task<ActionResult<TagDto>> CreateTag([FromBody] TagUpsertRequest req)
+        => Ok(await _reference.SaveTagAsync(null, req));
+
+    [Authorize(Roles = Roles.Administrator)]
+    [HttpPut("tags/{id:int}")]
+    public async Task<ActionResult<TagDto>> UpdateTag(int id, [FromBody] TagUpsertRequest req)
+        => Ok(await _reference.SaveTagAsync(id, req));
+
+    [Authorize(Roles = Roles.Administrator)]
+    [HttpDelete("tags/{id:int}")]
+    public async Task<IActionResult> DeleteTag(int id)
+    {
+        await _reference.DeleteTagAsync(id);
+        return NoContent();
+    }
 }

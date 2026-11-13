@@ -16,8 +16,8 @@ public class ReviewsController : ControllerBase
     public ReviewsController(IReviewService reviews) => _reviews = reviews;
 
     [HttpGet("salon/{salonId:int}")]
-    public async Task<ActionResult<IReadOnlyList<ReviewDto>>> ForSalon(int salonId)
-        => Ok(await _reviews.GetForSalonAsync(salonId));
+    public async Task<ActionResult<IReadOnlyList<ReviewDto>>> ForSalon(int salonId, [FromQuery] PagedQuery query)
+        => Ok(await _reviews.GetForSalonAsync(salonId, query));
 
     [HttpPost]
     public async Task<ActionResult<ReviewDto>> Create([FromBody] CreateReviewRequest req)

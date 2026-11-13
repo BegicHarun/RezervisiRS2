@@ -19,6 +19,9 @@ public interface IReferenceService
     Task DeleteCategoryAsync(int id);
 
     Task<IReadOnlyList<TagDto>> GetTagsAsync();
+    Task<PagedResult<TagDto>> GetTagPageAsync(PagedQuery query);
+    Task<TagDto> SaveTagAsync(int? id, TagUpsertRequest request);
+    Task DeleteTagAsync(int id);
 }
 
 public class ReferenceService : IReferenceService
@@ -127,4 +130,42 @@ public class ReferenceService : IReferenceService
         await _db.Tags.AsNoTracking().OrderBy(t => t.Name)
             .Select(t => new TagDto { Id = t.Id, Name = t.Name })
             .ToListAsync();
+
+    public async Task<PagedResult<TagDto>> GetTagPageAsync(PagedQuery query)
+    {
+        var tags = _db.Tags.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(query.Search))
+            tags = tags.Where(t => t.Name.Contains(query.Search));
+        var total = await tags.CountAsync();
+        var items = await tags.OrderBy(t => t.Name).ThenBy(t => t.Id)
+            .Skip(query.Skip).Take(query.PageSize)
+            .Select(t => new TagDto { Id = t.Id, Name = t.Name }).ToListAsync();
+        return new PagedResult<TagDto>
+        { Items = items, TotalCount = total, Page = query.Page, PageSize = query.PageSize };
+    }
+
+    public async Task<TagDto> SaveTagAsync(int? id, TagUpsertRequest request)
+    {
+        var name = request.Name.Trim();
+        if (name.Length == 0) throw new ValidationException("Naziv oznake je obavezan.");
+        if (await _db.Tags.AnyAsync(t => t.Name == name && (id == null || t.Id != id)))
+            throw new ConflictException("Oznaka s tim nazivom vec postoji.");
+
+        var tag = id is int tagId
+            ? await _db.Tags.FindAsync(tagId) ?? throw new NotFoundException("Oznaka", tagId)
+            : new Tag();
+        tag.Name = name;
+        if (id is null) _db.Tags.Add(tag);
+        await _db.SaveChangesAsync();
+        return new TagDto { Id = tag.Id, Name = tag.Name };
+    }
+
+    public async Task DeleteTagAsync(int id)
+    {
+        var tag = await _db.Tags.FindAsync(id) ?? throw new NotFoundException("Oznaka", id);
+        if (await _db.ReviewTags.AnyAsync(r => r.TagId == id))
+            throw new ConflictException("Oznaka se ne moze obrisati jer je koriste recenzije.");
+        _db.Tags.Remove(tag);
+        await _db.SaveChangesAsync();
+    }
 }

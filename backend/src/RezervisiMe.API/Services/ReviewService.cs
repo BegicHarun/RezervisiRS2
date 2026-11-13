@@ -9,7 +9,7 @@ namespace RezervisiMe.API.Services;
 
 public interface IReviewService
 {
-    Task<IReadOnlyList<ReviewDto>> GetForSalonAsync(int salonId);
+    Task<IReadOnlyList<ReviewDto>> GetForSalonAsync(int salonId, PagedQuery query);
     Task<ReviewDto> CreateAsync(CreateReviewRequest req);
 }
 
@@ -24,24 +24,15 @@ public class ReviewService : IReviewService
         _currentUser = currentUser;
     }
 
-    public async Task<IReadOnlyList<ReviewDto>> GetForSalonAsync(int salonId)
+    public async Task<IReadOnlyList<ReviewDto>> GetForSalonAsync(int salonId, PagedQuery query)
     {
         return await _db.Reviews.AsNoTracking()
             .Where(r => r.SalonId == salonId)
             .Include(r => r.Client)
             .Include(r => r.ReviewTags).ThenInclude(rt => rt.Tag)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new ReviewDto
-            {
-                Id = r.Id,
-                ReservationId = r.ReservationId,
-                SalonId = r.SalonId,
-                ClientName = $"{r.Client.FirstName} {r.Client.LastName}",
-                Rating = r.Rating,
-                Comment = r.Comment,
-                CreatedAt = r.CreatedAt,
-                Tags = r.ReviewTags.Select(rt => rt.Tag.Name).ToList()
-            })
+            .OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
+            .Skip(query.Skip).Take(query.PageSize)
+            .Select(ToDto)
             .ToListAsync();
     }
 
@@ -88,6 +79,19 @@ public class ReviewService : IReviewService
         _db.Reviews.Add(review);
         await _db.SaveChangesAsync();
 
-        return (await GetForSalonAsync(salonId)).First(r => r.Id == review.Id);
+        return await _db.Reviews.AsNoTracking().Where(r => r.Id == review.Id)
+            .Select(ToDto).SingleAsync();
     }
+    private static readonly System.Linq.Expressions.Expression<Func<Review, ReviewDto>> ToDto =
+        r => new ReviewDto
+            {
+                Id = r.Id,
+                ReservationId = r.ReservationId,
+                SalonId = r.SalonId,
+                ClientName = $"{r.Client.FirstName} {r.Client.LastName}",
+                Rating = r.Rating,
+                Comment = r.Comment,
+                CreatedAt = r.CreatedAt,
+                Tags = r.ReviewTags.Select(rt => rt.Tag.Name).ToList()
+            };
 }

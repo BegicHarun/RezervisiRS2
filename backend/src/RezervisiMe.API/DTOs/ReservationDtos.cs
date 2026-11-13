@@ -41,7 +41,7 @@ public class CreateReservationRequest
     public int ServiceId { get; set; }
 
     [Required(ErrorMessage = "Odaberite termin.")]
-    public DateTime StartTime { get; set; }
+    public DateTimeOffset StartTime { get; set; }
     // ClientId se NE prima - uzima se iz JWT tokena (upute 5).
     // Price se NE prima - server sam odredjuje iz kataloga usluga (upute 7.1).
 }
@@ -53,6 +53,7 @@ public class ChangeStatusRequest
     public string Status { get; set; } = null!;
 
     /// <summary>Razlog - obavezan kod otkazivanja/odbijanja.</summary>
+    [StringLength(500)]
     public string? Reason { get; set; }
 }
 

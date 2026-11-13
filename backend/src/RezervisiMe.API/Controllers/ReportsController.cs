@@ -20,6 +20,8 @@ public class ReportsController : ControllerBase
     {
         var f = from ?? DateTime.UtcNow.AddDays(-30);
         var t = to ?? DateTime.UtcNow;
+        if (t.Date < f.Date || (t.Date - f.Date).TotalDays > 366)
+            throw new ValidationException("Odaberite ispravan raspon do 366 dana.");
         var pdf = await _reports.RevenueReportAsync(f, t);
         return File(pdf, "application/pdf", $"prihodi_{f:yyyyMMdd}_{t:yyyyMMdd}.pdf");
     }
@@ -30,6 +32,8 @@ public class ReportsController : ControllerBase
     {
         var f = from ?? DateTime.UtcNow.AddDays(-30);
         var t = to ?? DateTime.UtcNow;
+        if (t.Date < f.Date || (t.Date - f.Date).TotalDays > 366)
+            throw new ValidationException("Odaberite ispravan raspon do 366 dana.");
         var pdf = await _reports.PopularServicesReportAsync(f, t);
         return File(pdf, "application/pdf", $"popularne_usluge_{f:yyyyMMdd}_{t:yyyyMMdd}.pdf");
     }

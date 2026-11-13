@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RezervisiMe.API.Auth;
@@ -39,6 +40,24 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Logout()
     {
         await _auth.LogoutAsync(_currentUser.Id);
+        return NoContent();
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("password-reset")]
+    [HttpPost("password-reset/request")]
+    public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetRequest request)
+    {
+        await _auth.RequestPasswordResetAsync(request);
+        return Accepted();
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("password-reset")]
+    [HttpPost("password-reset/confirm")]
+    public async Task<IActionResult> ConfirmPasswordReset([FromBody] PasswordResetConfirmation request)
+    {
+        await _auth.ResetPasswordAsync(request);
         return NoContent();
     }
 }

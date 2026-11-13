@@ -1,3 +1,4 @@
+using RezervisiMe.API.Auth;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -22,31 +23,47 @@ public interface IReportService
 public class ReportService : IReportService
 {
     private readonly ApplicationDbContext _db;
-    public ReportService(ApplicationDbContext db) => _db = db;
+    private readonly ICurrentUser _currentUser;
+    public ReportService(ApplicationDbContext db, ICurrentUser currentUser)
+    {
+        _db = db;
+        _currentUser = currentUser;
+    }
+
+    private IQueryable<Reservation> ForCurrentRole()
+    {
+        var reservations = _db.Reservations.AsNoTracking();
+        if (_currentUser.IsAdmin) return reservations;
+        var userId = _currentUser.Id;
+        return reservations.Where(r => _db.Hairdressers.Any(h =>
+            h.UserId == userId && h.SalonId == r.Service.SalonId));
+    }
 
     public async Task<byte[]> RevenueReportAsync(DateTime from, DateTime to)
     {
         var toEnd = to.Date.AddDays(1);
-        var data = await _db.Reservations.AsNoTracking()
+        var data = await ForCurrentRole()
+            .Include(r => r.Payment)
             .Include(r => r.Service)
-            .Where(r => r.Status == ReservationStatus.Completed &&
+            .Where(r => r.Status != ReservationStatus.Cancelled &&
+                        r.Payment != null && r.Payment.Status == PaymentStatus.Completed &&
                         r.StartTime >= from.Date && r.StartTime < toEnd)
             .ToListAsync();
 
-        var totalRevenue = data.Sum(r => r.Price);
+        var totalRevenue = data.Sum(r => r.Payment!.Amount);
         var totalCount = data.Count;
         var avg = totalCount == 0 ? 0 : totalRevenue / totalCount;
 
         var byDay = data
             .GroupBy(r => r.StartTime.Date)
             .OrderBy(g => g.Key)
-            .Select(g => new { Day = g.Key, Count = g.Count(), Revenue = g.Sum(r => r.Price) })
+            .Select(g => new { Day = g.Key, Count = g.Count(), Revenue = g.Sum(r => r.Payment!.Amount) })
             .ToList();
 
         var byService = data
             .GroupBy(r => r.Service.Name)
-            .OrderByDescending(g => g.Sum(r => r.Price))
-            .Select(g => new { Name = g.Key, Count = g.Count(), Revenue = g.Sum(r => r.Price) })
+            .OrderByDescending(g => g.Sum(r => r.Payment!.Amount))
+            .Select(g => new { Name = g.Key, Count = g.Count(), Revenue = g.Sum(r => r.Payment!.Amount) })
             .ToList();
 
         return Document.Create(doc =>
@@ -72,9 +89,9 @@ public class ReportService : IReportService
                     // Sazetak
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().Column(c => { c.Item().Text("Ukupan prihod").FontColor(Colors.Grey.Darken1); c.Item().Text($"{totalRevenue:0.00} KM").FontSize(14).Bold(); });
+                        row.RelativeItem().Column(c => { c.Item().Text("Ukupan prihod").FontColor(Colors.Grey.Darken1); c.Item().Text($"{totalRevenue:0.00} USD").FontSize(14).Bold(); });
                         row.RelativeItem().Column(c => { c.Item().Text("Broj rezervacija").FontColor(Colors.Grey.Darken1); c.Item().Text($"{totalCount}").FontSize(14).Bold(); });
-                        row.RelativeItem().Column(c => { c.Item().Text("Prosjecna vrijednost").FontColor(Colors.Grey.Darken1); c.Item().Text($"{avg:0.00} KM").FontSize(14).Bold(); });
+                        row.RelativeItem().Column(c => { c.Item().Text("Prosjecna vrijednost").FontColor(Colors.Grey.Darken1); c.Item().Text($"{avg:0.00} USD").FontSize(14).Bold(); });
                     });
 
                     // Po danima
@@ -92,7 +109,7 @@ public class ReportService : IReportService
                         {
                             t.Cell().Element(BodyCell).Text($"{d.Day:dd.MM.yyyy}");
                             t.Cell().Element(BodyCell).AlignRight().Text($"{d.Count}");
-                            t.Cell().Element(BodyCell).AlignRight().Text($"{d.Revenue:0.00} KM");
+                            t.Cell().Element(BodyCell).AlignRight().Text($"{d.Revenue:0.00} USD");
                         }
                     });
 
@@ -111,7 +128,7 @@ public class ReportService : IReportService
                         {
                             t.Cell().Element(BodyCell).Text(s.Name);
                             t.Cell().Element(BodyCell).AlignRight().Text($"{s.Count}");
-                            t.Cell().Element(BodyCell).AlignRight().Text($"{s.Revenue:0.00} KM");
+                            t.Cell().Element(BodyCell).AlignRight().Text($"{s.Revenue:0.00} USD");
                         }
                     });
                 });
@@ -119,7 +136,7 @@ public class ReportService : IReportService
                 page.Footer().AlignCenter().Text(x =>
                 {
                     x.Span("Generisano: ");
-                    x.Span($"{DateTime.Now:dd.MM.yyyy HH:mm}");
+                    x.Span($"{DateTime.UtcNow:dd.MM.yyyy HH:mm}");
                     x.Span("  ·  Stranica ");
                     x.CurrentPageNumber();
                     x.Span(" / ");
@@ -132,7 +149,8 @@ public class ReportService : IReportService
     public async Task<byte[]> PopularServicesReportAsync(DateTime from, DateTime to)
     {
         var toEnd = to.Date.AddDays(1);
-        var data = await _db.Reservations.AsNoTracking()
+        var data = await ForCurrentRole()
+            .Include(r => r.Payment)
             .Include(r => r.Service).ThenInclude(s => s.ServiceCategory)
             .Where(r => r.StartTime >= from.Date && r.StartTime < toEnd &&
                         r.Status != ReservationStatus.Cancelled)
@@ -145,7 +163,7 @@ public class ReportService : IReportService
                 g.Key.Name,
                 g.Key.Category,
                 Count = g.Count(),
-                Revenue = g.Where(r => r.Status == ReservationStatus.Completed).Sum(r => r.Price)
+                Revenue = g.Where(r => r.Payment?.Status == PaymentStatus.Completed).Sum(r => r.Payment!.Amount)
             })
             .OrderByDescending(x => x.Count)
             .ToList();
@@ -198,7 +216,7 @@ public class ReportService : IReportService
                             t.Cell().Element(BodyCell).Text(s.Name);
                             t.Cell().Element(BodyCell).Text(s.Category);
                             t.Cell().Element(BodyCell).AlignRight().Text($"{s.Count}");
-                            t.Cell().Element(BodyCell).AlignRight().Text($"{s.Revenue:0.00} KM");
+                            t.Cell().Element(BodyCell).AlignRight().Text($"{s.Revenue:0.00} USD");
                         }
                     });
                 });
@@ -206,7 +224,7 @@ public class ReportService : IReportService
                 page.Footer().AlignCenter().Text(x =>
                 {
                     x.Span("Generisano: ");
-                    x.Span($"{DateTime.Now:dd.MM.yyyy HH:mm}");
+                    x.Span($"{DateTime.UtcNow:dd.MM.yyyy HH:mm}");
                     x.Span("  ·  Stranica ");
                     x.CurrentPageNumber();
                     x.Span(" / ");

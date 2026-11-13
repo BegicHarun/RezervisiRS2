@@ -13,6 +13,7 @@ namespace RezervisiMe.Worker;
 public class NotificationConsumer : BackgroundService
 {
     public const string QueueName = "notifications";
+    private const string DeadLetterQueue = "notifications.failed";
 
     private readonly ILogger<NotificationConsumer> _logger;
     private readonly IEmailSender _emailSender;
@@ -30,7 +31,7 @@ public class NotificationConsumer : BackgroundService
     {
         // RabbitMQ zna biti spor pri dizanju - pokusaj konekcije sa retry-em.
         await ConnectWithRetryAsync(stoppingToken);
-        if (_channel is null) return;
+        if (_channel is null) throw new InvalidOperationException("RabbitMQ nije dostupan.");
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageAsync;
@@ -53,7 +54,11 @@ public class NotificationConsumer : BackgroundService
 
             if (msg is not null && !string.IsNullOrWhiteSpace(msg.Email))
             {
-                await _emailSender.SendAsync(msg.Email, msg.Title, msg.Body, CancellationToken.None);
+                await SendWithRetryAsync(msg, ea.CancellationToken);
+            }
+            else
+            {
+                throw new JsonException("Poruka nema adresu primatelja.");
             }
 
             // Potvrdi obradu tek nakon uspjeha (ako padne, poruka se vraca u red).
@@ -62,10 +67,27 @@ public class NotificationConsumer : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Obrada poruke nije uspjela: {Json}", json);
+            _logger.LogError(ex, "Obrada poruke {DeliveryTag} nije uspjela.", ea.DeliveryTag);
             // Ne vracaj u red beskonacno - odbaci (da ne blokira red).
             if (_channel is not null)
                 await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
+        }
+    }
+
+    private async Task SendWithRetryAsync(NotificationMessage message, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await _emailSender.SendAsync(message.Email, message.Title, message.Body, ct);
+                return;
+            }
+            catch (Exception ex) when (attempt < 3 && !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Slanje e-maila nije uspjelo. Pokusaj {Attempt}.", attempt + 1);
+                await Task.Delay(TimeSpan.FromSeconds(1 << attempt), ct);
+            }
         }
     }
 
@@ -85,8 +107,14 @@ public class NotificationConsumer : BackgroundService
             {
                 _connection = await factory.CreateConnectionAsync(ct);
                 _channel = await _connection.CreateChannelAsync(cancellationToken: ct);
+                await _channel.QueueDeclareAsync(DeadLetterQueue, durable: true, exclusive: false,
+                    autoDelete: false, cancellationToken: ct);
                 await _channel.QueueDeclareAsync(QueueName, durable: true, exclusive: false, autoDelete: false,
-                    cancellationToken: ct);
+                    arguments: new Dictionary<string, object?>
+                    {
+                        ["x-dead-letter-exchange"] = "",
+                        ["x-dead-letter-routing-key"] = DeadLetterQueue
+                    }, cancellationToken: ct);
                 _logger.LogInformation("Povezan na RabbitMQ ({Host}).", factory.HostName);
                 return;
             }

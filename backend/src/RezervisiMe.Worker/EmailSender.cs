@@ -35,13 +35,9 @@ public class EmailSender : IEmailSender
         _fromAddress = string.IsNullOrWhiteSpace(_user) ? "no-reply@rezervisime.ba" : _user;
     }
 
-    private bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(_host) &&
-        _host != "smtp.example.com"; // primjer iz .env.example = nije stvarno konfigurisano
-
     public async Task SendAsync(string toEmail, string subject, string body, CancellationToken ct)
     {
-        if (!IsConfigured)
+        if (string.IsNullOrWhiteSpace(_host) || _host == "smtp.example.com")
         {
             // Dev rezim: nema pravog SMTP-a, samo logiraj da bi se vidjelo da worker radi.
             _logger.LogInformation(
@@ -57,7 +53,7 @@ public class EmailSender : IEmailSender
         msg.Body = new TextPart("plain") { Text = body };
 
         using var client = new SmtpClient();
-        var socketOptions = _useSsl ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable;
+        var socketOptions = _useSsl ? SecureSocketOptions.SslOnConnect : string.IsNullOrWhiteSpace(_user) ? SecureSocketOptions.StartTlsWhenAvailable : SecureSocketOptions.StartTls;
         await client.ConnectAsync(_host, _port, socketOptions, ct);
         if (!string.IsNullOrWhiteSpace(_user))
             await client.AuthenticateAsync(_user, _password, ct);

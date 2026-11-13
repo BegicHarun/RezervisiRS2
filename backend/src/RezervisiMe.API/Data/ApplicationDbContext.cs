@@ -1,3 +1,4 @@
+using RezervisiMe.API.Services;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using RezervisiMe.API.Entities;
@@ -29,6 +30,8 @@ public class ApplicationDbContext
     public DbSet<SalonImage> SalonImages => Set<SalonImage>();
     public DbSet<ReviewTag> ReviewTags => Set<ReviewTag>();
     public DbSet<Payment> Payments => Set<Payment>();
+
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     // Referentne tabele
     public DbSet<City> Cities => Set<City>();

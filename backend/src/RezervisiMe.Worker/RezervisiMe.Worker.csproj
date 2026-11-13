@@ -14,8 +14,9 @@
     <!-- Slusanje RabbitMQ reda poruka. -->
     <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
     <!-- Slanje emaila preko SMTP-a. -->
-    <PackageReference Include="MailKit" Version="4.8.0" />
+    <PackageReference Include="MailKit" Version="4.18.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
   </ItemGroup>
 
 </Project>

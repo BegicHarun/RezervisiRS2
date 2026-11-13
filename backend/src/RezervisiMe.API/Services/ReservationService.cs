@@ -10,7 +10,8 @@ namespace RezervisiMe.API.Services;
 public interface IReservationService
 {
     Task<PagedResult<ReservationDto>> GetMineAsync(PagedQuery query);
-    Task<PagedResult<ReservationDto>> GetForManagementAsync(PagedQuery query, string? status);
+    Task<PagedResult<ReservationDto>> GetForManagementAsync(PagedQuery query, string? status,
+        DateTimeOffset? from = null, DateTimeOffset? to = null, int? hairdresserId = null);
     Task<ReservationDto> GetByIdAsync(int id);
     Task<ReservationDto> CreateAsync(CreateReservationRequest req);
     Task<ReservationDto> ChangeStatusAsync(int id, ChangeStatusRequest req);
@@ -19,20 +20,37 @@ public interface IReservationService
 
 public class ReservationService : IReservationService
 {
+    private static readonly TimeZoneInfo SalonTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Sarajevo");
+    private static DateTime SalonLocalTimeToUtc(DateOnly date, TimeOnly time, bool endBoundary = false)
+    {
+        var local = date.ToDateTime(time);
+        // Advance nonexistent wall-clock times to the first valid minute after the spring gap.
+        while (SalonTimeZone.IsInvalidTime(local))
+            local = local.AddMinutes(1);
+
+        if (SalonTimeZone.IsAmbiguousTime(local))
+        {
+            var offsets = SalonTimeZone.GetAmbiguousTimeOffsets(local);
+            return new DateTimeOffset(local, endBoundary ? offsets.Min() : offsets.Max()).UtcDateTime;
+        }
+
+        return TimeZoneInfo.ConvertTimeToUtc(local, SalonTimeZone);
+    }
+
     private readonly ApplicationDbContext _db;
     private readonly ICurrentUser _currentUser;
-    private readonly IMessagePublisher _publisher;
+    private readonly NotificationOutbox _outbox;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
         ApplicationDbContext db,
         ICurrentUser currentUser,
-        IMessagePublisher publisher,
+        NotificationOutbox outbox,
         ILogger<ReservationService> logger)
     {
         _db = db;
         _currentUser = currentUser;
-        _publisher = publisher;
+        _outbox = outbox;
         _logger = logger;
     }
 
@@ -43,7 +61,8 @@ public class ReservationService : IReservationService
         return await PageAsync(q, query);
     }
 
-    public async Task<PagedResult<ReservationDto>> GetForManagementAsync(PagedQuery query, string? status)
+    public async Task<PagedResult<ReservationDto>> GetForManagementAsync(PagedQuery query, string? status,
+        DateTimeOffset? from = null, DateTimeOffset? to = null, int? hairdresserId = null)
     {
         var q = BaseQuery();
 
@@ -61,6 +80,12 @@ public class ReservationService : IReservationService
                 ? q.Where(r => false)
                 : q.Where(r => r.Service.SalonId == salonId);
         }
+
+        if (from.HasValue && to.HasValue && from >= to)
+            throw new ValidationException("Pocetak raspona mora biti prije kraja.");
+        if (from is { } start) q = q.Where(r => r.EndTime > start.UtcDateTime);
+        if (to is { } end) q = q.Where(r => r.StartTime < end.UtcDateTime);
+        if (hairdresserId is { } id) q = q.Where(r => r.HairdresserId == id);
 
         if (!string.IsNullOrWhiteSpace(status) &&
             Enum.TryParse<ReservationStatus>(status, true, out var parsed))
@@ -80,7 +105,8 @@ public class ReservationService : IReservationService
                 ?? throw new NotFoundException("Rezervacija", id);
 
         // Klijent smije vidjeti samo svoje; admin vidi sve.
-        if (!_currentUser.IsAdmin && r.ClientId != _currentUser.Id)
+        if (!_currentUser.IsAdmin && r.ClientId != _currentUser.Id &&
+            !await _db.Hairdressers.AnyAsync(h => h.UserId == _currentUser.Id && h.SalonId == r.Service.SalonId))
             throw new ForbiddenException("Nemate pristup ovoj rezervaciji.");
 
         return Map(r);
@@ -101,8 +127,10 @@ public class ReservationService : IReservationService
         if (hairdresser.VerificationStatus != VerificationStatus.Approved)
             throw new BusinessException("Frizer nije verifikovan.");
 
+        await EnsureServiceAvailableAsync(service, hairdresser.Id);
+
         // Termin ne moze biti u proslosti.
-        var start = DateTime.SpecifyKind(req.StartTime, DateTimeKind.Utc);
+        var start = req.StartTime.UtcDateTime;
         if (start < DateTime.UtcNow)
             throw new BusinessException("Termin ne moze biti u proslosti.");
 
@@ -111,6 +139,13 @@ public class ReservationService : IReservationService
 
         // Provjera radnog vremena frizera na backendu.
         await EnsureWithinWorkingHours(hairdresser.Id, start, end);
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await ReservationLock.AcquireAsync(_db, $"hairdresser-booking:{hairdresser.Id}");
+        await ReservationLock.AcquireAsync(_db, $"client-booking:{clientId}");
+        if (await _db.Reservations.AnyAsync(r => r.ClientId == clientId && r.StartTime == start &&
+                r.Status != ReservationStatus.Cancelled))
+            throw new ConflictException("Vec imate rezervaciju u tom terminu.");
 
         // Provjera preklapanja termina na backendu, ne samo na frontendu (upute 7).
         await EnsureNoOverlap(hairdresser.Id, start, end);
@@ -127,17 +162,15 @@ public class ReservationService : IReservationService
         };
 
         // Vise SaveChanges u jednoj operaciji -> eksplicitna transakcija (upute 3.4).
-        await using var tx = await _db.Database.BeginTransactionAsync();
         _db.Reservations.Add(reservation);
         await _db.SaveChangesAsync();
 
         AddAudit(reservation.Id, clientId, AuditAction.Created, "Rezervacija kreirana.");
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-
-        // Notifikacija (upisujemo u bazu + saljemo na worker).
+        // Notifikacija i zapis za Worker se spremaju u istoj transakciji.
         await NotifyAsync(clientId, "Rezervacija zaprimljena",
             $"Vasa rezervacija za '{service.Name}' je zaprimljena i ceka potvrdu.");
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         _logger.LogInformation("Kreirana rezervacija {Id} za korisnika {UserId}", reservation.Id, clientId);
         return await GetByIdInternal(reservation.Id);
@@ -148,6 +181,8 @@ public class ReservationService : IReservationService
         if (!Enum.TryParse<ReservationStatus>(req.Status, true, out var target))
             throw new ValidationException($"Nepoznat status '{req.Status}'.");
 
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await ReservationLock.AcquireAsync(_db, id);
         var reservation = await _db.Reservations
             .Include(r => r.Service)
             .Include(r => r.Client)
@@ -185,6 +220,10 @@ public class ReservationService : IReservationService
         // Provjera dozvoljenog prelaza kroz centralnu state machine.
         ReservationStateMachine.EnsureTransition(reservation.Status, target);
 
+        if (target == ReservationStatus.Cancelled && await _db.Payments.AnyAsync(p =>
+                p.ReservationId == id && p.Status == PaymentStatus.Completed))
+            throw new ConflictException("Prije otkazivanja placene rezervacije potrebno je izvrsiti povrat.");
+
         // Otkazivanje/odbijanje zahtijeva razlog (upute 7).
         if (target == ReservationStatus.Cancelled && string.IsNullOrWhiteSpace(req.Reason))
             throw new ValidationException("Razlog otkazivanja je obavezan.");
@@ -197,16 +236,14 @@ public class ReservationService : IReservationService
             _ => AuditAction.Confirmed
         };
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
         reservation.Status = target;
         reservation.StatusReason = req.Reason;
         AddAudit(reservation.Id, _currentUser.Id, action, req.Reason ?? $"Status promijenjen u {target}.");
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-
         await NotifyAsync(reservation.ClientId, $"Rezervacija: {target}",
             $"Status vase rezervacije za '{reservation.Service.Name}' je sada: {target}." +
             (req.Reason is not null ? $" Razlog: {req.Reason}" : ""));
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return await GetByIdInternal(reservation.Id);
     }
@@ -217,6 +254,8 @@ public class ReservationService : IReservationService
         var service = await _db.Services.FirstOrDefaultAsync(s => s.Id == serviceId)
                       ?? throw new NotFoundException("Usluga", serviceId);
 
+        await EnsureServiceAvailableAsync(service, hairdresserId);
+
         var workingHour = await _db.WorkingHours.AsNoTracking()
             .FirstOrDefaultAsync(w => w.HairdresserId == hairdresserId && w.DayOfWeek == date.DayOfWeek);
 
@@ -224,8 +263,8 @@ public class ReservationService : IReservationService
             return new List<AvailableSlotDto>();
 
         // Postojece aktivne rezervacije tog dana (za taj termin).
-        var dayStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-        var dayEnd = dayStart.AddDays(1);
+        var dayStart = SalonLocalTimeToUtc(date, TimeOnly.MinValue);
+        var dayEnd = SalonLocalTimeToUtc(date.AddDays(1), TimeOnly.MinValue);
         var busy = await _db.Reservations.AsNoTracking()
             .Where(r => r.HairdresserId == hairdresserId
                      && r.Status != ReservationStatus.Cancelled
@@ -234,8 +273,8 @@ public class ReservationService : IReservationService
             .ToListAsync();
 
         var slots = new List<AvailableSlotDto>();
-        var cursor = date.ToDateTime(workingHour.StartTime, DateTimeKind.Utc);
-        var closing = date.ToDateTime(workingHour.EndTime, DateTimeKind.Utc);
+        var cursor = SalonLocalTimeToUtc(date, workingHour.StartTime);
+        var closing = SalonLocalTimeToUtc(date, workingHour.EndTime, endBoundary: true);
         var duration = TimeSpan.FromMinutes(service.DurationMinutes);
 
         while (cursor.Add(duration) <= closing)
@@ -271,13 +310,24 @@ public class ReservationService : IReservationService
     private async Task<PagedResult<ReservationDto>> PageAsync(IQueryable<Reservation> q, PagedQuery query)
     {
         var total = await q.CountAsync();
-        var items = await q.OrderByDescending(r => r.StartTime)
+        var items = await q.OrderByDescending(r => r.StartTime).ThenByDescending(r => r.Id)
             .Skip(query.Skip).Take(query.PageSize).ToListAsync();
         return new PagedResult<ReservationDto>
         {
             Items = items.Select(Map).ToList(),
             TotalCount = total, Page = query.Page, PageSize = query.PageSize
         };
+    }
+
+    private async Task EnsureServiceAvailableAsync(Service service, int hairdresserId)
+    {
+        var available = service.IsActive && await _db.Hairdressers.AnyAsync(h =>
+            h.Id == hairdresserId && h.SalonId == service.SalonId &&
+            h.VerificationStatus == VerificationStatus.Approved &&
+            h.Salon.VerificationStatus == VerificationStatus.Approved &&
+            (!h.HairdresserServices.Any() || h.HairdresserServices.Any(link => link.ServiceId == service.Id)));
+        if (!available)
+            throw new BusinessException("Odabrana usluga nije dostupna kod ovog frizera.");
     }
 
     private async Task EnsureNoOverlap(int hairdresserId, DateTime start, DateTime end)
@@ -293,15 +343,17 @@ public class ReservationService : IReservationService
 
     private async Task EnsureWithinWorkingHours(int hairdresserId, DateTime start, DateTime end)
     {
+        var localStart = TimeZoneInfo.ConvertTimeFromUtc(start, SalonTimeZone);
         var wh = await _db.WorkingHours.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.HairdresserId == hairdresserId && w.DayOfWeek == start.DayOfWeek);
+            .FirstOrDefaultAsync(w => w.HairdresserId == hairdresserId && w.DayOfWeek == localStart.DayOfWeek);
 
         if (wh is null || wh.IsDayOff)
             throw new BusinessException("Frizer ne radi u odabranom terminu.");
 
-        var startTod = TimeOnly.FromDateTime(start);
-        var endTod = TimeOnly.FromDateTime(end);
-        if (startTod < wh.StartTime || endTod > wh.EndTime)
+        var day = DateOnly.FromDateTime(localStart);
+        var opening = SalonLocalTimeToUtc(day, wh.StartTime);
+        var closing = SalonLocalTimeToUtc(day, wh.EndTime, endBoundary: true);
+        if (start < opening || end > closing)
             throw new BusinessException(
                 $"Termin je izvan radnog vremena frizera ({wh.StartTime:HH\\:mm}-{wh.EndTime:HH\\:mm}).");
     }
@@ -318,11 +370,9 @@ public class ReservationService : IReservationService
     private async Task NotifyAsync(int userId, string title, string text)
     {
         _db.Notifications.Add(new Notification { UserId = userId, Title = title, Text = text });
-        await _db.SaveChangesAsync();
-
         var email = await _db.Users.Where(u => u.Id == userId).Select(u => u.Email).FirstOrDefaultAsync();
         if (!string.IsNullOrEmpty(email))
-            await _publisher.PublishAsync(new NotificationMessage(userId, email, title, text));
+            _outbox.Enqueue(new NotificationMessage(userId, email, title, text));
     }
 
     private static ReservationDto Map(Reservation r) => new()

@@ -74,3 +74,9 @@ public class TagDto
     public int Id { get; set; }
     public string Name { get; set; } = null!;
 }
+
+public class TagUpsertRequest
+{
+    [Required, StringLength(60)]
+    public string Name { get; set; } = null!;
+}

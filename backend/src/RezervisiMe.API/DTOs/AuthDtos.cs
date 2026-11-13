@@ -43,3 +43,18 @@ public class AuthResponse
     public DateTime ExpiresAt { get; set; }
     public UserDto User { get; set; } = null!;
 }
+
+public class PasswordResetRequest
+{
+    [Required, EmailAddress, StringLength(254)]
+    public string Email { get; set; } = null!;
+}
+
+public class PasswordResetConfirmation : PasswordResetRequest
+{
+    [Required, StringLength(2048)]
+    public string Token { get; set; } = null!;
+
+    [Required, StringLength(100, MinimumLength = 6)]
+    public string NewPassword { get; set; } = null!;
+}

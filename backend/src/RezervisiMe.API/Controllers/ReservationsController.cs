@@ -23,8 +23,9 @@ public class ReservationsController : ControllerBase
     [Authorize(Roles = Roles.Administrator + "," + Roles.Frizer)]
     [HttpGet]
     public async Task<ActionResult<PagedResult<ReservationDto>>> All(
-        [FromQuery] PagedQuery query, [FromQuery] string? status)
-        => Ok(await _reservations.GetForManagementAsync(query, status));
+        [FromQuery] PagedQuery query, [FromQuery] string? status,
+        [FromQuery] DateTimeOffset? from, [FromQuery] DateTimeOffset? to, [FromQuery] int? hairdresserId)
+        => Ok(await _reservations.GetForManagementAsync(query, status, from, to, hairdresserId));
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<ReservationDto>> GetById(int id)

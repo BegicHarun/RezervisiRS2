@@ -5,12 +5,13 @@ using System.Text.Json;
 namespace RezervisiMe.API.Services;
 
 public record PayPalOrder(string OrderId, string Status, string? ApproveUrl);
-public record PayPalCapture(string CaptureId, string Status);
+public record PayPalCapture(string CaptureId, string Status, decimal? Amount = null, string? Currency = null);
 
 public interface IPayPalClient
 {
     bool IsConfigured { get; }
     Task<PayPalOrder> CreateOrderAsync(decimal amount, string currency, string reference, string returnUrl, string cancelUrl);
+    Task<PayPalOrder> GetOrderAsync(string orderId);
     Task<PayPalCapture> CaptureOrderAsync(string orderId);
     Task<string> RefundCaptureAsync(string captureId, decimal amount, string currency);
 }
@@ -95,7 +96,7 @@ public class PayPalClient : IPayPalClient
             }
         };
 
-        var res = await client.PostAsync($"{_baseUrl}/v2/checkout/orders",
+        using var res = await client.PostAsync($"{_baseUrl}/v2/checkout/orders",
             new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
         var body = await res.Content.ReadAsStringAsync();
         if (!res.IsSuccessStatusCode)
@@ -117,21 +118,34 @@ public class PayPalClient : IPayPalClient
         return new PayPalOrder(orderId, status, approveUrl);
     }
 
+    public async Task<PayPalOrder> GetOrderAsync(string orderId)
+    {
+        using var client = _httpFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await GetAccessTokenAsync());
+        using var response = await client.GetAsync($"{_baseUrl}/v2/checkout/orders/{Uri.EscapeDataString(orderId)}");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        string? approval = null;
+        if (root.TryGetProperty("links", out var links))
+            foreach (var link in links.EnumerateArray())
+                if (link.GetProperty("rel").GetString() is "approve" or "payer-action")
+                    approval = link.GetProperty("href").GetString();
+        return new PayPalOrder(orderId, root.GetProperty("status").GetString()!, approval);
+    }
+
     public async Task<PayPalCapture> CaptureOrderAsync(string orderId)
     {
         var token = await GetAccessTokenAsync();
         var client = _httpFactory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var res = await client.PostAsync($"{_baseUrl}/v2/checkout/orders/{orderId}/capture",
+        client.DefaultRequestHeaders.Add("PayPal-Request-Id", $"capture-{orderId}");
+        using var res = await client.PostAsync($"{_baseUrl}/v2/checkout/orders/{orderId}/capture",
             new StringContent("{}", Encoding.UTF8, "application/json"));
         var body = await res.Content.ReadAsStringAsync();
         if (!res.IsSuccessStatusCode)
         {
-            // Sandbox PayPal test racuni znaju vratiti COMPLIANCE_VIOLATION (422) na capture,
-            // iako je order uredno kreiran i korisnik ga je odobrio. To je ogranicenje sandbox
-            // okruzenja, ne greska u kodu. Umjesto da srusimo tok, vratimo poseban status da
-            // servis moze odluciti sta dalje (u sandbox modu tretira kao uspjeh - vidi PaymentService).
             if (res.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity &&
                 body.Contains("COMPLIANCE_VIOLATION", StringComparison.OrdinalIgnoreCase))
             {
@@ -145,14 +159,26 @@ public class PayPalClient : IPayPalClient
         var status = root.GetProperty("status").GetString()!;
         // captureId se nalazi u purchase_units[0].payments.captures[0].id
         string captureId = "";
+        decimal? amount = null;
+        string? currency = null;
         var pu = root.GetProperty("purchase_units")[0];
         if (pu.TryGetProperty("payments", out var payments) &&
             payments.TryGetProperty("captures", out var captures) &&
             captures.GetArrayLength() > 0)
         {
-            captureId = captures[0].GetProperty("id").GetString() ?? "";
+            var capture = captures[0];
+            captureId = capture.GetProperty("id").GetString() ?? "";
+            status = capture.GetProperty("status").GetString() ?? status;
+            if (capture.TryGetProperty("amount", out var capturedAmount))
+            {
+                currency = capturedAmount.GetProperty("currency_code").GetString();
+                if (decimal.TryParse(capturedAmount.GetProperty("value").GetString(),
+                        System.Globalization.NumberStyles.Number,
+                        System.Globalization.CultureInfo.InvariantCulture, out var value))
+                    amount = value;
+            }
         }
-        return new PayPalCapture(captureId, status);
+        return new PayPalCapture(captureId, status, amount, currency);
     }
 
     public async Task<string> RefundCaptureAsync(string captureId, decimal amount, string currency)
@@ -170,7 +196,8 @@ public class PayPalClient : IPayPalClient
             }
         };
 
-        var res = await client.PostAsync($"{_baseUrl}/v2/payments/captures/{captureId}/refund",
+        client.DefaultRequestHeaders.Add("PayPal-Request-Id", $"refund-{captureId}");
+        using var res = await client.PostAsync($"{_baseUrl}/v2/payments/captures/{captureId}/refund",
             new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
         var body = await res.Content.ReadAsStringAsync();
         if (!res.IsSuccessStatusCode)
