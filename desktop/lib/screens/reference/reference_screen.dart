@@ -1,263 +1,353 @@
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
-import "../../models/core.dart";
 import "../../services/api_service.dart";
-import "../../theme/app_theme.dart";
 import "../../widgets/common.dart";
 
-class ReferenceScreen extends StatefulWidget {
-  const ReferenceScreen({super.key});
-  @override
-  State<ReferenceScreen> createState() => _ReferenceScreenState();
+enum _ReferenceKind {
+  city("Gradovi", "Grad", 100),
+  category("Kategorije", "Kategorija", 100),
+  tag("Oznake recenzija", "Oznaka", 60);
+
+  const _ReferenceKind(this.tab, this.label, this.maxLength);
+  final String tab;
+  final String label;
+  final int maxLength;
 }
 
-class _ReferenceScreenState extends State<ReferenceScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tab;
-  List<CityDto> _cities = [];
-  List<ServiceCategoryDto> _categories = [];
+typedef _ReferenceRow = ({int id, String name, String? detail});
+
+class ReferenceScreen extends StatelessWidget {
+  const ReferenceScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => DefaultTabController(
+        length: _ReferenceKind.values.length,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const PageHeader("Referentni podaci"),
+            const SizedBox(height: 16),
+            TabBar(tabs: [
+              for (final kind in _ReferenceKind.values) Tab(text: kind.tab)
+            ]),
+            const SizedBox(height: 16),
+            Expanded(
+                child: TabBarView(
+              children: [
+                for (final kind in _ReferenceKind.values) _ReferenceList(kind)
+              ],
+            )),
+          ],
+        ),
+      );
+}
+
+class _ReferenceList extends StatefulWidget {
+  const _ReferenceList(this.kind);
+  final _ReferenceKind kind;
+
+  @override
+  State<_ReferenceList> createState() => _ReferenceListState();
+}
+
+class _ReferenceListState extends State<_ReferenceList> {
+  List<_ReferenceRow> _rows = [];
+  int _page = 1;
+  int _totalPages = 0;
+  int _revision = 0;
+  String _search = "";
+  Object? _error;
   bool _loading = false;
+  bool _mutating = false;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 2, vsync: this);
     _load();
   }
 
+  Future<void> _load() async {
+    final revision = ++_revision;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final api = context.read<ApiService>();
+    try {
+      final (List<_ReferenceRow> rows, int pages) = switch (widget.kind) {
+        _ReferenceKind.city => await api
+            .getCities(page: _page, pageSize: 25, search: _search)
+            .then((result) => (
+                  result.items
+                      .map((item) =>
+                          (id: item.id, name: item.name, detail: item.region))
+                      .toList(),
+                  result.totalPages
+                )),
+        _ReferenceKind.category => await api
+            .getCategories(page: _page, pageSize: 25, search: _search)
+            .then((result) => (
+                  result.items
+                      .map((item) =>
+                          (id: item.id, name: item.name, detail: item.iconName))
+                      .toList(),
+                  result.totalPages
+                )),
+        _ReferenceKind.tag =>
+          await api.getTags(page: _page, search: _search).then((result) => (
+                result.items
+                    .map((item) => (id: item.id, name: item.name, detail: null))
+                    .toList(),
+                result.totalPages
+              )),
+      };
+      if (!mounted || revision != _revision) return;
+      if (_page > 1 && _page > pages) {
+        _page = pages > 0 ? pages : 1;
+        await _load();
+        return;
+      }
+      _rows = rows;
+      _totalPages = pages;
+    } catch (error) {
+      if (mounted && revision == _revision) _error = error;
+    } finally {
+      if (mounted && revision == _revision) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _edit([_ReferenceRow? row]) async {
+    setState(() => _mutating = true);
+    final api = context.read<ApiService>();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReferenceForm(kind: widget.kind, row: row, api: api),
+    );
+    if (!mounted) return;
+    setState(() => _mutating = false);
+    if (saved == true) {
+      showOk(context, "Podaci su spremljeni.");
+      await _load();
+    }
+  }
+
+  Future<void> _delete(_ReferenceRow row) async {
+    setState(() => _mutating = true);
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: const Text("Potvrdi brisanje"),
+          content: Text("Obrisati zapis „${row.name}”?"),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: const Text("Odustani")),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialog, true),
+                child: const Text("Obriši")),
+          ],
+        ),
+      );
+      if (!mounted || confirmed != true) return;
+      final api = context.read<ApiService>();
+      await switch (widget.kind) {
+        _ReferenceKind.city => api.deleteCity(row.id),
+        _ReferenceKind.category => api.deleteCategory(row.id),
+        _ReferenceKind.tag => api.deleteTag(row.id),
+      };
+      if (!mounted) return;
+      showOk(context, "Zapis je obrisan.");
+      await _load();
+    } catch (error) {
+      if (mounted) showError(context, error);
+    } finally {
+      if (mounted) setState(() => _mutating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          Row(children: [
+            Expanded(child: ListSearch(onSearch: (value) {
+              _search = value;
+              _page = 1;
+              _load();
+            })),
+            const SizedBox(width: 16),
+            FilledButton.icon(
+              onPressed: _loading || _mutating ? null : () => _edit(),
+              icon: const Icon(Icons.add),
+              label: Text("Dodaj · ${widget.kind.label}"),
+            ),
+          ]),
+          ListPages(
+              page: _page,
+              totalPages: _totalPages,
+              loading: _loading || _mutating,
+              onPage: (page) {
+                _page = page;
+                _load();
+              }),
+          Expanded(
+              child: _loading
+                  ? const LoadingView()
+                  : _error != null
+                      ? Center(
+                          child: TextButton(
+                              onPressed: _load,
+                              child: Text("Pokušaj ponovo: $_error")))
+                      : _rows.isEmpty
+                          ? const EmptyView("Nema rezultata")
+                          : ListView.separated(
+                              itemCount: _rows.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final row = _rows[index];
+                                return ListTile(
+                                  title: Text(row.name),
+                                  subtitle: row.detail == null
+                                      ? null
+                                      : Text(row.detail!),
+                                  trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                            tooltip: "Uredi",
+                                            onPressed: _mutating
+                                                ? null
+                                                : () => _edit(row),
+                                            icon: const Icon(
+                                                Icons.edit_outlined)),
+                                        IconButton(
+                                            tooltip: "Obriši",
+                                            onPressed: _mutating
+                                                ? null
+                                                : () => _delete(row),
+                                            icon: const Icon(
+                                                Icons.delete_outline)),
+                                      ]),
+                                );
+                              },
+                            )),
+        ],
+      );
+}
+
+class _ReferenceForm extends StatefulWidget {
+  const _ReferenceForm(
+      {required this.kind, required this.row, required this.api});
+  final _ReferenceKind kind;
+  final _ReferenceRow? row;
+  final ApiService api;
+
+  @override
+  State<_ReferenceForm> createState() => _ReferenceFormState();
+}
+
+class _ReferenceFormState extends State<_ReferenceForm> {
+  final _form = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.row?.name);
+  late final _detail = TextEditingController(text: widget.row?.detail);
+  bool _saving = false;
+  Object? _error;
+
   @override
   void dispose() {
-    _tab.dispose();
+    _name.dispose();
+    _detail.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _save() async {
+    if (_saving || !_form.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final id = widget.row?.id;
+    final name = _name.text.trim();
+    final detail = _detail.text.trim();
     try {
-      final api = context.read<ApiService>();
-      _cities = (await api.getCities()).items;
-      _categories = (await api.getCategories()).items;
-    } catch (e) {
-      if (mounted) showError(context, e);
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      switch (widget.kind) {
+        case _ReferenceKind.city:
+          final body = {"name": name, "region": detail};
+          if (id == null) {
+            await widget.api.createCity(body);
+          } else {
+            await widget.api.updateCity(id, body);
+          }
+        case _ReferenceKind.category:
+          final body = {
+            "name": name,
+            "iconName": detail.isEmpty ? null : detail
+          };
+          if (id == null) {
+            await widget.api.createCategory(body);
+          } else {
+            await widget.api.updateCategory(id, body);
+          }
+        case _ReferenceKind.tag:
+          await widget.api.saveTag(id, name);
+      }
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error;
+          _saving = false;
+        });
+      }
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PageHeader("Referentni podaci",
-            subtitle: "Gradovi i kategorije usluga",
-            action: ElevatedButton.icon(
-              onPressed: () =>
-                  _tab.index == 0 ? _editCity() : _editCategory(),
-              icon: const Icon(Icons.add),
-              label: Text(_tab.index == 0 ? "Novi grad" : "Nova kategorija"),
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(
+            "${widget.row == null ? "Dodaj" : "Uredi"} · ${widget.kind.label}"),
+        content: SizedBox(
+            width: 360,
+            child: Form(
+              key: _form,
+              child: SingleChildScrollView(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextFormField(
+                  controller: _name,
+                  enabled: !_saving,
+                  maxLength: widget.kind.maxLength,
+                  decoration: const InputDecoration(labelText: "Naziv"),
+                  validator: (value) =>
+                      (value?.trim().isEmpty ?? true) ? "Unesite naziv." : null,
+                ),
+                if (widget.kind != _ReferenceKind.tag)
+                  TextFormField(
+                    controller: _detail,
+                    enabled: !_saving,
+                    maxLength: widget.kind == _ReferenceKind.city ? 100 : 50,
+                    decoration: InputDecoration(
+                        labelText: widget.kind == _ReferenceKind.city
+                            ? "Regija / kanton"
+                            : "Ikona (opcionalno)"),
+                    validator: (value) => widget.kind == _ReferenceKind.city &&
+                            (value?.trim().isEmpty ?? true)
+                        ? "Unesite regiju."
+                        : null,
+                  ),
+                if (_error != null)
+                  Text("$_error",
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+              ])),
             )),
-        const SizedBox(height: 16),
-        TabBar(
-          controller: _tab,
-          labelColor: AppColors.primary,
-          indicatorColor: AppColors.primary,
-          onTap: (_) => setState(() {}),
-          tabs: const [Tab(text: "Gradovi"), Tab(text: "Kategorije")],
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: _loading
-              ? const LoadingView()
-              : TabBarView(
-                  controller: _tab,
-                  children: [_citiesTab(), _categoriesTab()],
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _citiesTab() {
-    return Container(
-      decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border)),
-      child: _cities.isEmpty
-          ? const EmptyView("Nema gradova")
-          : SingleChildScrollView(
-              child: SizedBox(
-                width: double.infinity,
-                child: DataTable(
-                  headingRowColor:
-                      WidgetStateProperty.all(AppColors.background),
-                  columns: const [
-                    DataColumn(label: Text("Naziv")),
-                    DataColumn(label: Text("Regija / kanton")),
-                    DataColumn(label: Text("Saloni")),
-                    DataColumn(label: Text("Akcije")),
-                  ],
-                  rows: _cities
-                      .map((c) => DataRow(cells: [
-                            DataCell(Text(c.name)),
-                            DataCell(Text(c.region)),
-                            DataCell(Text("${c.salonCount}")),
-                            DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
-                              IconButton(
-                                  icon: const Icon(Icons.edit_outlined, size: 20),
-                                  onPressed: () => _editCity(existing: c)),
-                              IconButton(
-                                  icon: const Icon(Icons.delete_outline,
-                                      size: 20, color: AppColors.cancelled),
-                                  onPressed: () => _deleteCity(c)),
-                            ])),
-                          ]))
-                      .toList(),
-                ),
-              ),
-            ),
-    );
-  }
-
-  Widget _categoriesTab() {
-    return Container(
-      decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border)),
-      child: _categories.isEmpty
-          ? const EmptyView("Nema kategorija")
-          : ListView.separated(
-              itemCount: _categories.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, i) {
-                final c = _categories[i];
-                return ListTile(
-                  title: Text(c.name),
-                  subtitle: c.iconName != null ? Text("Ikona: ${c.iconName}") : null,
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(
-                        icon: const Icon(Icons.edit_outlined, size: 20),
-                        onPressed: () => _editCategory(existing: c)),
-                    IconButton(
-                        icon: const Icon(Icons.delete_outline,
-                            size: 20, color: AppColors.cancelled),
-                        onPressed: () => _deleteCategory(c)),
-                  ]),
-                );
-              },
-            ),
-    );
-  }
-
-  Future<void> _editCity({CityDto? existing}) async {
-    final name = TextEditingController(text: existing?.name ?? "");
-    final region = TextEditingController(text: existing?.region ?? "");
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existing == null ? "Novi grad" : "Uredi grad"),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: "Naziv")),
-          const SizedBox(height: 12),
-          TextField(
-              controller: region,
-              decoration: const InputDecoration(labelText: "Regija / kanton")),
-        ]),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: _saving ? null : () => Navigator.pop(context),
               child: const Text("Odustani")),
-          ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("Sacuvaj")),
+          FilledButton(
+              onPressed: _saving ? null : _save,
+              child: Text(_saving ? "Spremanje…" : "Sačuvaj")),
         ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      final body = {"name": name.text.trim(), "region": region.text.trim()};
-      final api = context.read<ApiService>();
-      if (existing == null) {
-        await api.createCity(body);
-      } else {
-        await api.updateCity(existing.id, body);
-      }
-      if (mounted) showOk(context, "Sacuvano.");
-      _load();
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-  }
-
-  Future<void> _deleteCity(CityDto c) async {
-    try {
-      await context.read<ApiService>().deleteCity(c.id);
-      if (mounted) showOk(context, "Grad obrisan.");
-      _load();
-    } catch (e) {
-      // Backend vraca jasnu poruku ako je grad u upotrebi.
-      if (mounted) showError(context, e);
-    }
-  }
-
-  Future<void> _editCategory({ServiceCategoryDto? existing}) async {
-    final name = TextEditingController(text: existing?.name ?? "");
-    final icon = TextEditingController(text: existing?.iconName ?? "");
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existing == null ? "Nova kategorija" : "Uredi kategoriju"),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: "Naziv")),
-          const SizedBox(height: 12),
-          TextField(
-              controller: icon,
-              decoration: const InputDecoration(
-                  labelText: "Ikona (opcionalno)",
-                  hintText: "npr. content_cut")),
-        ]),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("Odustani")),
-          ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("Sacuvaj")),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      final body = {
-        "name": name.text.trim(),
-        "iconName": icon.text.trim().isEmpty ? null : icon.text.trim()
-      };
-      final api = context.read<ApiService>();
-      if (existing == null) {
-        await api.createCategory(body);
-      } else {
-        await api.updateCategory(existing.id, body);
-      }
-      if (mounted) showOk(context, "Sacuvano.");
-      _load();
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-  }
-
-  Future<void> _deleteCategory(ServiceCategoryDto c) async {
-    try {
-      await context.read<ApiService>().deleteCategory(c.id);
-      if (mounted) showOk(context, "Kategorija obrisana.");
-      _load();
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-  }
+      );
 }

@@ -1,9 +1,8 @@
-import "dart:io";
 import "dart:typed_data";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 import "package:intl/intl.dart";
-import "package:path_provider/path_provider.dart";
+import "package:file_selector/file_selector.dart";
 import "package:open_filex/open_filex.dart";
 import "../../services/api_service.dart";
 import "../../theme/app_theme.dart";
@@ -27,10 +26,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (picked != null) setState(() => isFrom ? _from = picked : _to = picked);
+    if (mounted && picked != null) {
+      setState(() => isFrom ? _from = picked : _to = picked);
+    }
   }
 
   Future<void> _generate(bool revenue) async {
+    if (DateUtils.dateOnly(_from).isAfter(DateUtils.dateOnly(_to))) {
+      showError(context,
+          "Datum početka mora biti prije ili jednak datumu završetka.");
+      return;
+    }
     setState(() => _busy = true);
     try {
       final api = context.read<ApiService>();
@@ -38,15 +44,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ? await api.revenueReport(_from, _to)
           : await api.popularServicesReport(_from, _to);
 
-      final dir = await getApplicationDocumentsDirectory();
       final name = revenue
           ? "prihodi_${DateFormat('yyyyMMdd').format(_from)}_${DateFormat('yyyyMMdd').format(_to)}.pdf"
           : "popularne_usluge_${DateFormat('yyyyMMdd').format(_from)}_${DateFormat('yyyyMMdd').format(_to)}.pdf";
-      final file = File("${dir.path}/$name");
-      await file.writeAsBytes(bytes);
+      if (!mounted) return;
+      final target =
+          await getSaveLocation(suggestedName: name, acceptedTypeGroups: const [
+        XTypeGroup(label: "PDF", extensions: ["pdf"])
+      ]);
+      if (target == null || !mounted) return;
+      final path = target.path.toLowerCase().endsWith(".pdf")
+          ? target.path
+          : "${target.path}.pdf";
+      await XFile.fromData(bytes, mimeType: "application/pdf", name: name)
+          .saveTo(path);
 
-      if (mounted) showOk(context, "Sacuvano: ${file.path}");
-      await OpenFilex.open(file.path);
+      final result = await OpenFilex.open(path);
+      if (!mounted) return;
+      if (result.type == ResultType.done) {
+        showOk(context,
+            "PDF je spremljen u $path. Ispis je dostupan u PDF pregledniku.");
+      } else {
+        showError(context,
+            "PDF je spremljen u $path. Otvaranje nije uspjelo: ${result.message}");
+      }
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
@@ -72,16 +93,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
               border: Border.all(color: AppColors.border)),
           child: Row(
             children: [
-              const Text("Period:", style: TextStyle(fontWeight: FontWeight.w600)),
+              const Text("Period:",
+                  style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(width: 16),
               OutlinedButton.icon(
-                onPressed: () => _pick(true),
+                onPressed: _busy ? null : () => _pick(true),
                 icon: const Icon(Icons.calendar_today, size: 16),
                 label: Text("Od: ${df.format(_from)}"),
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: () => _pick(false),
+                onPressed: _busy ? null : () => _pick(false),
                 icon: const Icon(Icons.calendar_today, size: 16),
                 label: Text("Do: ${df.format(_to)}"),
               ),
@@ -144,7 +166,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ),
           const SizedBox(height: 16),
           Text(title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text(description,
               style: const TextStyle(color: AppColors.textSecondary)),

@@ -54,15 +54,24 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
   Future<void> _act(ReservationDto r, bool approve) async {
     String? reason;
     if (!approve) {
-      reason = await _askReason();
-      if (reason == null) return; // otkazano
+      reason = await _askReason(
+          r.status == "Pending" ? "Razlog odbijanja" : "Razlog otkazivanja");
+      if (!mounted || reason == null) return; // otkazano
     }
     try {
       await context.read<ApiService>().changeStatus(
           r.id, approve ? "Confirmed" : "Cancelled",
           reason: reason);
-      if (mounted) showOk(context, approve ? "Rezervacija potvrdjena." : "Rezervacija odbijena.");
-      _load();
+      if (mounted) {
+        showOk(
+            context,
+            approve
+                ? "Rezervacija potvrđena."
+                : r.status == "Pending"
+                    ? "Zahtjev odbijen."
+                    : "Rezervacija otkazana.");
+      }
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -72,39 +81,14 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     try {
       await context.read<ApiService>().changeStatus(r.id, "Completed");
       if (mounted) showOk(context, "Rezervacija zavrsena.");
-      _load();
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
   }
 
-  Future<String?> _askReason() async {
-    final c = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Razlog odbijanja"),
-        content: TextField(
-          controller: c,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: "Obavezno unesite razlog"),
-          maxLines: 2,
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text("Odustani")),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
-            onPressed: () {
-              if (c.text.trim().isEmpty) return;
-              Navigator.pop(ctx, c.text.trim());
-            },
-            child: const Text("Odbij"),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<String?> _askReason(String title) =>
+      showReasonDialog(context, title, "Potvrdi");
 
   @override
   Widget build(BuildContext context) {
@@ -182,8 +166,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         width: double.infinity,
         child: DataTable(
           columnSpacing: 24,
-          headingRowColor:
-              WidgetStateProperty.all(AppColors.background),
+          headingRowColor: WidgetStateProperty.all(AppColors.background),
           columns: const [
             DataColumn(label: Text("Klijent")),
             DataColumn(label: Text("Usluga")),
@@ -201,11 +184,19 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
               DataCell(Text(r.hairdresserName)),
               DataCell(Text(df.format(r.startTime))),
               DataCell(Text("${r.price.toStringAsFixed(2)} KM")),
-              DataCell(StatusBadge(r.status)),
+              DataCell(Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    StatusBadge(r.status),
+                    if (r.isPaid)
+                      const Text("Plaćeno", style: TextStyle(fontSize: 11))
+                  ])),
               DataCell(SizedBox(
                 width: 200,
                 child: Text(r.auditSummary ?? "-",
-                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12)),
               )),
               DataCell(_actions(r)),
@@ -232,12 +223,12 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
     }
     if (r.status == "Confirmed") {
       return Row(mainAxisSize: MainAxisSize.min, children: [
-        TextButton(
-            onPressed: () => _complete(r), child: const Text("Zavrsi")),
+        TextButton(onPressed: () => _complete(r), child: const Text("Zavrsi")),
         IconButton(
-            tooltip: "Otkazi",
+            tooltip:
+                r.isPaid ? "Prije otkazivanja potreban je povrat." : "Otkaži",
             icon: const Icon(Icons.cancel_outlined, color: AppColors.cancelled),
-            onPressed: () => _act(r, false)),
+            onPressed: r.isPaid ? null : () => _act(r, false)),
       ]);
     }
     return const Text("-", style: TextStyle(color: AppColors.textSecondary));
@@ -263,7 +254,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                     : null,
                 icon: const Icon(Icons.chevron_left),
               ),
-              Text("Strana ${d.page} / ${d.totalPages == 0 ? 1 : d.totalPages}"),
+              Text(
+                  "Strana ${d.page} / ${d.totalPages == 0 ? 1 : d.totalPages}"),
               IconButton(
                 onPressed: d.page < d.totalPages
                     ? () {

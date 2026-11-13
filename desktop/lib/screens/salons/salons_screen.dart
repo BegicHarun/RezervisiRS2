@@ -16,6 +16,10 @@ class _SalonsScreenState extends State<SalonsScreen> {
   List<SalonDto> _salons = [];
   List<CityDto> _cities = [];
   bool _loading = false;
+  int _page = 1;
+  int _totalPages = 0;
+  int _request = 0;
+  String _search = "";
 
   @override
   void initState() {
@@ -24,15 +28,19 @@ class _SalonsScreenState extends State<SalonsScreen> {
   }
 
   Future<void> _load() async {
+    final request = ++_request;
     setState(() => _loading = true);
     try {
       final api = context.read<ApiService>();
       if (_cities.isEmpty) _cities = (await api.getCities()).items;
-      _salons = (await api.getSalons(pageSize: 100)).items;
+      final res = await api.getSalons(page: _page, search: _search);
+      if (!mounted || request != _request) return;
+      _totalPages = res.totalPages;
+      _salons = res.items;
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && request == _request) showError(context, e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
@@ -41,7 +49,11 @@ class _SalonsScreenState extends State<SalonsScreen> {
       context: context,
       builder: (_) => _SalonDialog(existing: existing, cities: _cities),
     );
-    if (saved == true) _load();
+    if (mounted && saved == true) {
+      showOk(context, "Salon je spremljen.");
+      _page = 1;
+      _load();
+    }
   }
 
   Future<void> _delete(SalonDto s) async {
@@ -55,17 +67,18 @@ class _SalonsScreenState extends State<SalonsScreen> {
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text("Odustani")),
           FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
+              style:
+                  FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text("Obrisi")),
         ],
       ),
     );
-    if (ok != true) return;
+    if (!mounted || ok != true) return;
     try {
       await context.read<ApiService>().deleteSalon(s.id);
       if (mounted) showOk(context, "Salon obrisan.");
-      _load();
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -78,11 +91,27 @@ class _SalonsScreenState extends State<SalonsScreen> {
       children: [
         PageHeader("Saloni",
             subtitle: "Upravljanje salonima",
-            action: ElevatedButton.icon(
-                onPressed: () => _edit(),
-                icon: const Icon(Icons.add),
-                label: const Text("Novi salon"))),
-        const SizedBox(height: 20),
+            action: Tooltip(
+                message: (_cities.isEmpty) ? "Prvo dodajte grad." : "",
+                child: ElevatedButton.icon(
+                    onPressed: (_cities.isEmpty) ? null : () => _edit(),
+                    icon: const Icon(Icons.add),
+                    label: const Text("Novi salon")))),
+        const SizedBox(height: 16),
+        ListSearch(onSearch: (value) {
+          _page = 1;
+          _search = value;
+          _load();
+        }),
+        ListPages(
+            page: _page,
+            totalPages: _totalPages,
+            loading: _loading,
+            onPage: (page) {
+              _page = page;
+              _load();
+            }),
+        const SizedBox(height: 12),
         Expanded(
           child: Container(
             decoration: BoxDecoration(
@@ -113,7 +142,8 @@ class _SalonsScreenState extends State<SalonsScreen> {
                                       DataCell(Text(s.name)),
                                       DataCell(Text(s.address)),
                                       DataCell(Text(s.cityName)),
-                                      DataCell(StatusChip(s.verificationStatus)),
+                                      DataCell(
+                                          StatusChip(s.verificationStatus)),
                                       DataCell(Text(s.reviewCount > 0
                                           ? "${s.averageRating.toStringAsFixed(1)} (${s.reviewCount})"
                                           : "-")),
@@ -121,11 +151,16 @@ class _SalonsScreenState extends State<SalonsScreen> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           IconButton(
-                                              icon: const Icon(Icons.edit_outlined, size: 20),
-                                              onPressed: () => _edit(existing: s)),
+                                              icon: const Icon(
+                                                  Icons.edit_outlined,
+                                                  size: 20),
+                                              onPressed: () =>
+                                                  _edit(existing: s)),
                                           IconButton(
-                                              icon: const Icon(Icons.delete_outline,
-                                                  size: 20, color: AppColors.cancelled),
+                                              icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  size: 20,
+                                                  color: AppColors.cancelled),
                                               onPressed: () => _delete(s)),
                                         ],
                                       )),
@@ -216,14 +251,14 @@ class _SalonDialogState extends State<_SalonDialog> {
                   controller: _name,
                   decoration: const InputDecoration(labelText: "Naziv"),
                   validator: (v) =>
-                      (v == null || v.isEmpty) ? "Obavezno" : null,
+                      (v == null || v.trim().isEmpty) ? "Obavezno" : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _address,
                   decoration: const InputDecoration(labelText: "Adresa"),
                   validator: (v) =>
-                      (v == null || v.isEmpty) ? "Obavezno" : null,
+                      (v == null || v.trim().isEmpty) ? "Obavezno" : null,
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
@@ -248,7 +283,8 @@ class _SalonDialogState extends State<_SalonDialog> {
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text("Odustani")),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Odustani")),
         ElevatedButton(
           onPressed: _saving ? null : _save,
           child: _saving

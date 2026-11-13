@@ -2,20 +2,13 @@
 
 Admin/frizer panel. Seminarski RS II, IB220008.
 
-## Preduslovi
-- Flutter SDK (3.5+) sa desktop podrskom
-  - macOS: `flutter config --enable-macos-desktop`
-  - Windows: `flutter config --enable-windows-desktop`
-- Pokrenut backend na `http://localhost:5000` (sa fazom A: dashboard, reports, verify, working-hours)
+## Pokretanje na Windowsu
 
-## Povezivanje
-Vidi `lib/services/config.dart`. Desktop vidi `localhost` direktno.
-Provjeri HTTP port u konzoli backenda i po potrebi ga promijeni.
+Pokreni backend prema korijenskom README-u. Potrebni su Flutter SDK s podrškom za Windows i Visual Studio s komponentom Desktop development with C++.
 
-## Pokretanje
-```bash
+```powershell
 flutter pub get
-flutter run -d macos      # ili: flutter run -d windows
+flutter run -d windows --dart-define=API_BASE_URL=http://localhost:5126/api
 ```
 
 ## Moduli (7.1–7.8)
@@ -25,7 +18,7 @@ flutter run -d macos      # ili: flutter run -d windows
 - Usluge: CRUD, kategorija iz padajuce liste, aktivna/neaktivna
 - Frizeri: lista + radno vrijeme po danima
 - Verifikacija: saloni i frizeri po statusu, odobri/odbij uz razlog
-- Referentni podaci: gradovi i kategorije (CRUD, zasticeno brisanje u upotrebi)
+- Referentni podaci: gradovi, kategorije i oznake recenzija (pretraga, paginacija i CRUD)
 - Izvjestaji: 2 PDF izvjestaja (prihodi, popularne usluge) — generisi, sacuvaj, otvori
 
 ## Prijava

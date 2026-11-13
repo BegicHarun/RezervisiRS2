@@ -17,6 +17,10 @@ class _ServicesScreenState extends State<ServicesScreen> {
   List<SalonDto> _salons = [];
   int? _filterCategory;
   bool _loading = false;
+  int _page = 1;
+  int _totalPages = 0;
+  int _request = 0;
+  String _search = "";
 
   @override
   void initState() {
@@ -25,17 +29,21 @@ class _ServicesScreenState extends State<ServicesScreen> {
   }
 
   Future<void> _load() async {
+    final request = ++_request;
     setState(() => _loading = true);
     try {
       final api = context.read<ApiService>();
       if (_categories.isEmpty) _categories = (await api.getCategories()).items;
       if (_salons.isEmpty) _salons = (await api.getSalons()).items;
-      final res = await api.getServices(categoryId: _filterCategory);
+      final res = await api.getServices(
+          page: _page, categoryId: _filterCategory, search: _search);
+      if (!mounted || request != _request) return;
+      _totalPages = res.totalPages;
       _services = res.items;
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && request == _request) showError(context, e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
@@ -45,7 +53,11 @@ class _ServicesScreenState extends State<ServicesScreen> {
       builder: (_) => _ServiceDialog(
           existing: existing, categories: _categories, salons: _salons),
     );
-    if (saved == true) _load();
+    if (mounted && saved == true) {
+      showOk(context, "Usluga je spremljena.");
+      _page = 1;
+      _load();
+    }
   }
 
   Future<void> _delete(ServiceDto s) async {
@@ -59,17 +71,18 @@ class _ServicesScreenState extends State<ServicesScreen> {
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text("Odustani")),
           FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
+              style:
+                  FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text("Obrisi")),
         ],
       ),
     );
-    if (ok != true) return;
+    if (!mounted || ok != true) return;
     try {
       await context.read<ApiService>().deleteService(s.id);
       if (mounted) showOk(context, "Usluga obrisana.");
-      _load();
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -82,11 +95,31 @@ class _ServicesScreenState extends State<ServicesScreen> {
       children: [
         PageHeader("Usluge i cijene",
             subtitle: "Katalog usluga salona",
-            action: ElevatedButton.icon(
-                onPressed: () => _edit(),
-                icon: const Icon(Icons.add),
-                label: const Text("Nova usluga"))),
-        const SizedBox(height: 20),
+            action: Tooltip(
+                message: (_categories.isEmpty || _salons.isEmpty)
+                    ? "Prvo dodajte kategoriju i salon."
+                    : "",
+                child: ElevatedButton.icon(
+                    onPressed: (_categories.isEmpty || _salons.isEmpty)
+                        ? null
+                        : () => _edit(),
+                    icon: const Icon(Icons.add),
+                    label: const Text("Nova usluga")))),
+        const SizedBox(height: 16),
+        ListSearch(onSearch: (value) {
+          _page = 1;
+          _search = value;
+          _load();
+        }),
+        ListPages(
+            page: _page,
+            totalPages: _totalPages,
+            loading: _loading,
+            onPage: (page) {
+              _page = page;
+              _load();
+            }),
+        const SizedBox(height: 12),
         Row(
           children: [
             SizedBox(
@@ -95,11 +128,13 @@ class _ServicesScreenState extends State<ServicesScreen> {
                 initialValue: _filterCategory,
                 decoration: const InputDecoration(labelText: "Kategorija"),
                 items: [
-                  const DropdownMenuItem(value: null, child: Text("Sve kategorije")),
-                  ..._categories.map(
-                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name))),
+                  const DropdownMenuItem(
+                      value: null, child: Text("Sve kategorije")),
+                  ..._categories.map((c) =>
+                      DropdownMenuItem(value: c.id, child: Text(c.name))),
                 ],
                 onChanged: (v) {
+                  _page = 1;
                   setState(() => _filterCategory = v);
                   _load();
                 },
@@ -137,8 +172,10 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                 .map((s) => DataRow(cells: [
                                       DataCell(Text(s.name)),
                                       DataCell(Text(s.serviceCategoryName)),
-                                      DataCell(Text("${s.durationMinutes} min")),
-                                      DataCell(Text("${s.price.toStringAsFixed(2)} KM")),
+                                      DataCell(
+                                          Text("${s.durationMinutes} min")),
+                                      DataCell(Text(
+                                          "${s.price.toStringAsFixed(2)} KM")),
                                       DataCell(Icon(
                                           s.isActive
                                               ? Icons.check_circle
@@ -151,11 +188,16 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           IconButton(
-                                              icon: const Icon(Icons.edit_outlined, size: 20),
-                                              onPressed: () => _edit(existing: s)),
+                                              icon: const Icon(
+                                                  Icons.edit_outlined,
+                                                  size: 20),
+                                              onPressed: () =>
+                                                  _edit(existing: s)),
                                           IconButton(
-                                              icon: const Icon(Icons.delete_outline,
-                                                  size: 20, color: AppColors.cancelled),
+                                              icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  size: 20,
+                                                  color: AppColors.cancelled),
                                               onPressed: () => _delete(s)),
                                         ],
                                       )),
@@ -199,7 +241,8 @@ class _ServiceDialogState extends State<_ServiceDialog> {
     _name = TextEditingController(text: e?.name ?? "");
     _desc = TextEditingController(text: e?.description ?? "");
     _price = TextEditingController(text: e?.price.toString() ?? "");
-    _duration = TextEditingController(text: e?.durationMinutes.toString() ?? "30");
+    _duration =
+        TextEditingController(text: e?.durationMinutes.toString() ?? "30");
     _categoryId = e?.serviceCategoryId ?? widget.categories.firstOrNull?.id;
     _salonId = e?.salonId ?? widget.salons.firstOrNull?.id;
     _active = e?.isActive ?? true;
@@ -258,7 +301,7 @@ class _ServiceDialogState extends State<_ServiceDialog> {
                   controller: _name,
                   decoration: const InputDecoration(labelText: "Naziv"),
                   validator: (v) =>
-                      (v == null || v.isEmpty) ? "Obavezno" : null,
+                      (v == null || v.trim().isEmpty) ? "Obavezno" : null,
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
@@ -288,11 +331,19 @@ class _ServiceDialogState extends State<_ServiceDialog> {
                       child: TextFormField(
                         controller: _price,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: "Cijena (KM)"),
-                        validator: (v) =>
-                            (double.tryParse((v ?? "").replaceAll(",", ".")) == null)
-                                ? "Broj"
-                                : null,
+                        decoration:
+                            const InputDecoration(labelText: "Cijena (KM)"),
+                        validator: (v) {
+                          final price = double.tryParse(
+                              (v ?? "").trim().replaceAll(",", "."));
+                          if (price == null ||
+                              !price.isFinite ||
+                              price < 0.01 ||
+                              price > 100000) {
+                            return "Unesite cijenu od 0,01 do 100.000 KM.";
+                          }
+                          return null;
+                        },
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -302,8 +353,13 @@ class _ServiceDialogState extends State<_ServiceDialog> {
                         keyboardType: TextInputType.number,
                         decoration:
                             const InputDecoration(labelText: "Trajanje (min)"),
-                        validator: (v) =>
-                            (int.tryParse(v ?? "") == null) ? "Broj" : null,
+                        validator: (v) {
+                          final minutes = int.tryParse((v ?? "").trim());
+                          if (minutes == null || minutes < 5 || minutes > 600) {
+                            return "Unesite od 5 do 600 minuta.";
+                          }
+                          return null;
+                        },
                       ),
                     ),
                   ],
@@ -328,7 +384,8 @@ class _ServiceDialogState extends State<_ServiceDialog> {
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text("Odustani")),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Odustani")),
         ElevatedButton(
           onPressed: _saving ? null : _save,
           child: _saving

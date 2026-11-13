@@ -11,6 +11,7 @@ class ReservationDto {
   final DateTime endTime;
   final double price;
   final String status;
+  final bool isPaid;
   final String? statusReason;
   final String? auditSummary;
   final String? lastActionBy;
@@ -28,6 +29,7 @@ class ReservationDto {
     required this.endTime,
     required this.price,
     required this.status,
+    this.isPaid = false,
     this.statusReason,
     this.auditSummary,
     this.lastActionBy,
@@ -46,6 +48,7 @@ class ReservationDto {
         endTime: DateTime.parse(j["endTime"]).toLocal(),
         price: (j["price"] ?? 0).toDouble(),
         status: j["status"] ?? "",
+        isPaid: j["isPaid"] == true,
         statusReason: j["statusReason"],
         auditSummary: j["auditSummary"],
         lastActionBy: j["lastActionBy"],

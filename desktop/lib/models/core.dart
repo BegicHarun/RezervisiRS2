@@ -225,3 +225,12 @@ class WorkingHourDto {
         isDayOff: j["isDayOff"] ?? false,
       );
 }
+
+class TagDto {
+  const TagDto(this.id, this.name);
+  final int id;
+  final String name;
+
+  factory TagDto.fromJson(Map<String, dynamic> json) =>
+      TagDto(json["id"] as int, json["name"] as String);
+}

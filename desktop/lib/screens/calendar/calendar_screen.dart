@@ -19,14 +19,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<HairdresserDto> _hairdressers = [];
   int? _hairdresserId;
   bool _loading = false;
+  int _request = 0;
+  Object? _error;
 
   static DateTime _mondayOf(DateTime d) {
     final date = DateTime(d.year, d.month, d.day);
-    return date.subtract(Duration(days: (date.weekday + 6) % 7));
+    return _dayOffset(date, 1 - date.weekday);
   }
 
-  static const int startHour = 8;
-  static const int endHour = 20;
+  static DateTime _dayOffset(DateTime date, int days) =>
+      DateTime(date.year, date.month, date.day + days);
 
   @override
   void initState() {
@@ -35,38 +37,66 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final request = ++_request;
+    final from = _weekStart;
+    final hairdresser = _hairdresserId;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final api = context.read<ApiService>();
-      if (_hairdressers.isEmpty) {
-        final hd = await api.getHairdressers(pageSize: 100);
-        _hairdressers = hd.items;
+      final reservations = <int, ReservationDto>{};
+      final staff = <HairdresserDto>[..._hairdressers];
+      if (staff.isEmpty) {
+        for (var page = 1; mounted && request == _request; page++) {
+          final result = await api.getHairdressers(page: page, pageSize: 100);
+          staff.addAll(result.items);
+          if (page >= result.totalPages) break;
+        }
       }
-      // Uzmi sve rezervacije (dovoljno velik pageSize za demo).
-      final res = await api.getReservations(pageSize: 100);
-      _all = res.items;
-    } catch (e) {
-      if (mounted) showError(context, e);
+      for (var page = 1; mounted && request == _request; page++) {
+        final result = await api.getReservations(
+          page: page,
+          pageSize: 100,
+          from: from,
+          to: _dayOffset(from, 7),
+          hairdresserId: hairdresser,
+        );
+        for (final item in result.items) {
+          reservations[item.id] = item;
+        }
+        if (page >= result.totalPages) break;
+      }
+      if (!mounted || request != _request) return;
+      _hairdressers = staff;
+      _all = reservations.values.toList()
+        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+    } catch (error) {
+      if (mounted && request == _request) _error = error;
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
+  void _selectWeek(DateTime start) {
+    _weekStart = start;
+    _load();
+  }
+
   List<ReservationDto> _forCell(DateTime day, int hour) {
-    return _all.where((r) {
-      if (_hairdresserId != null && r.hairdresserId != _hairdresserId) {
-        return false;
-      }
-      return r.startTime.year == day.year &&
-          r.startTime.month == day.month &&
-          r.startTime.day == day.day &&
-          r.startTime.hour == hour;
-    }).toList();
+    final start = DateTime(day.year, day.month, day.day, hour);
+    final end = DateTime(day.year, day.month, day.day, hour + 1);
+    return _all
+        .where((reservation) =>
+            reservation.startTime.isBefore(end) &&
+            reservation.endTime.isAfter(start))
+        .toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final days = List.generate(7, (i) => _weekStart.add(Duration(days: i)));
+    final days = List.generate(7, (i) => _dayOffset(_weekStart, i));
     final df = DateFormat("dd.MM");
     const dayNames = ["Pon", "Uto", "Sri", "Cet", "Pet", "Sub", "Ned"];
 
@@ -82,27 +112,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   width: 200,
                   child: DropdownButtonFormField<int?>(
                     initialValue: _hairdresserId,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: "Frizer"),
                     items: [
-                      const DropdownMenuItem(value: null, child: Text("Svi frizeri")),
-                      ..._hairdressers.map((h) =>
-                          DropdownMenuItem(value: h.id, child: Text(h.fullName))),
+                      const DropdownMenuItem(
+                          value: null, child: Text("Svi frizeri")),
+                      ..._hairdressers.map((h) => DropdownMenuItem(
+                          value: h.id,
+                          child: Text(h.fullName,
+                              overflow: TextOverflow.ellipsis))),
                     ],
-                    onChanged: (v) => setState(() => _hairdresserId = v),
+                    onChanged: (v) {
+                      _hairdresserId = v;
+                      _load();
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
                 IconButton(
-                    onPressed: () => setState(() =>
-                        _weekStart = _weekStart.subtract(const Duration(days: 7))),
+                    onPressed: () => _selectWeek(_dayOffset(_weekStart, -7)),
                     icon: const Icon(Icons.chevron_left)),
                 TextButton(
-                    onPressed: () =>
-                        setState(() => _weekStart = _mondayOf(DateTime.now())),
+                    onPressed: () => _selectWeek(_mondayOf(DateTime.now())),
                     child: const Text("Danas")),
                 IconButton(
-                    onPressed: () => setState(() =>
-                        _weekStart = _weekStart.add(const Duration(days: 7))),
+                    onPressed: () => _selectWeek(_dayOffset(_weekStart, 7)),
                     icon: const Icon(Icons.chevron_right)),
               ],
             )),
@@ -117,46 +151,53 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 border: Border.all(color: AppColors.border)),
             child: _loading
                 ? const LoadingView()
-                : Column(
-                    children: [
-                      // Header sa danima
-                      Row(
+                : _error != null
+                    ? Center(
+                        child: TextButton(
+                            onPressed: _load,
+                            child: Text("Pokušaj ponovo: $_error")))
+                    : Column(
                         children: [
-                          const SizedBox(width: 60),
-                          for (int i = 0; i < 7; i++)
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                alignment: Alignment.center,
-                                child: Column(
-                                  children: [
-                                    Text(dayNames[i],
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    Text(df.format(days[i]),
-                                        style: const TextStyle(
-                                            fontSize: 11,
-                                            color: AppColors.textSecondary)),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const Divider(height: 1),
-                      // Grid sati
-                      Expanded(
-                        child: SingleChildScrollView(
-                          child: Column(
+                          // Header sa danima
+                          Row(
                             children: [
-                              for (int hour = startHour; hour < endHour; hour++)
-                                _hourRow(hour, days),
+                              const SizedBox(width: 60),
+                              for (int i = 0; i < 7; i++)
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 10),
+                                    alignment: Alignment.center,
+                                    child: Column(
+                                      children: [
+                                        Text(dayNames[i],
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold)),
+                                        Text(df.format(days[i]),
+                                            style: const TextStyle(
+                                                fontSize: 11,
+                                                color:
+                                                    AppColors.textSecondary)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
-                        ),
+                          const Divider(height: 1),
+                          // Grid sati
+                          Expanded(
+                            child: SingleChildScrollView(
+                              child: Column(
+                                children: [
+                                  for (int hour = 0; hour < 24; hour++)
+                                    _hourRow(hour, days),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
           ),
         ),
       ],
@@ -187,9 +228,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     color: AppColors.background,
                     borderRadius: BorderRadius.circular(6)),
                 child: Column(
-                  children: _forCell(day, hour)
-                      .map((r) => _slot(r))
-                      .toList(),
+                  children: _forCell(day, hour).map((r) => _slot(r)).toList(),
                 ),
               ),
             ),
@@ -214,18 +253,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
           Text(r.serviceName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+              style:
+                  const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
           Text(r.clientName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              style: const TextStyle(
+                  fontSize: 10, color: AppColors.textSecondary)),
         ],
       ),
     );
   }
 
   Widget _legend() {
-    Widget item(String status) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Widget item(String status) =>
+        Row(mainAxisSize: MainAxisSize.min, children: [
           Container(
               width: 12,
               height: 12,

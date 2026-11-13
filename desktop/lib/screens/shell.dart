@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 import "../providers/auth_provider.dart";
 import "../theme/app_theme.dart";
+import "../widgets/common.dart";
 import "dashboard/dashboard_screen.dart";
 import "reservations/reservations_screen.dart";
 import "calendar/calendar_screen.dart";
@@ -47,9 +48,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
     final isAdmin = user?.roles.contains("Administrator") ?? false;
-    final items = _allItems
-        .where((it) => !it.adminOnly || isAdmin)
-        .toList();
+    final items = _allItems.where((it) => !it.adminOnly || isAdmin).toList();
     if (_index >= items.length) _index = 0;
     return Scaffold(
       body: Row(
@@ -61,14 +60,14 @@ class _AppShellState extends State<AppShell> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 24, 20, 24),
                   child: Row(
                     children: [
-                      const Icon(Icons.content_cut, color: Colors.white),
-                      const SizedBox(width: 10),
+                      Icon(Icons.content_cut, color: Colors.white),
+                      SizedBox(width: 10),
                       Text("RezervisiMe",
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold)),
@@ -84,9 +83,8 @@ class _AppShellState extends State<AppShell> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 2),
                         child: Material(
-                          color: selected
-                              ? AppColors.primary
-                              : Colors.transparent,
+                          color:
+                              selected ? AppColors.primary : Colors.transparent,
                           borderRadius: BorderRadius.circular(10),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(10),
@@ -161,8 +159,13 @@ class _AppShellState extends State<AppShell> {
                         tooltip: "Odjava",
                         icon: const Icon(Icons.logout,
                             color: Colors.white70, size: 20),
-                        onPressed: () =>
-                            context.read<AuthProvider>().logout(),
+                        onPressed: () async {
+                          try {
+                            await context.read<AuthProvider>().logout();
+                          } catch (error) {
+                            if (context.mounted) showError(context, error);
+                          }
+                        },
                       ),
                     ],
                   ),
@@ -175,10 +178,7 @@ class _AppShellState extends State<AppShell> {
             child: Container(
               color: AppColors.background,
               padding: const EdgeInsets.all(28),
-              child: IndexedStack(
-                index: _index,
-                children: items.map((e) => e.screen).toList(),
-              ),
+              child: items[_index].screen,
             ),
           ),
         ],

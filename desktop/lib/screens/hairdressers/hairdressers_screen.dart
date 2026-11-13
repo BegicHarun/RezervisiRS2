@@ -16,6 +16,10 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
   List<HairdresserDto> _list = [];
   HairdresserDto? _selected;
   bool _loading = false;
+  int _page = 1;
+  int _totalPages = 0;
+  int _request = 0;
+  String _search = "";
 
   @override
   void initState() {
@@ -24,17 +28,24 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
   }
 
   Future<void> _load() async {
+    final request = ++_request;
     setState(() => _loading = true);
     try {
-      final res = await context.read<ApiService>().getHairdressers(pageSize: 100);
+      final res = await context
+          .read<ApiService>()
+          .getHairdressers(page: _page, search: _search);
+      if (!mounted || request != _request) return;
+      _totalPages = res.totalPages;
       setState(() {
         _list = res.items;
-        _selected ??= _list.firstOrNull;
+        _selected =
+            _list.where((item) => item.id == _selected?.id).firstOrNull ??
+                _list.firstOrNull;
       });
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && request == _request) showError(context, e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
@@ -45,7 +56,7 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
       context: context,
       builder: (_) => _HairdresserAccountDialog(salons: salons.items),
     );
-    if (created == true) {
+    if (mounted && created == true) {
       _selected = null;
       _load();
     }
@@ -58,7 +69,10 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
       children: [
         PageHeader("Frizeri",
             subtitle: "Tim i raspolozivost (radno vrijeme)",
-            action: (context.watch<AuthProvider>().user?.roles
+            action: (context
+                        .watch<AuthProvider>()
+                        .user
+                        ?.roles
                         .contains("Administrator") ??
                     false)
                 ? ElevatedButton.icon(
@@ -66,7 +80,21 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
                     icon: const Icon(Icons.person_add_alt),
                     label: const Text("Dodaj frizera"))
                 : null),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
+        ListSearch(onSearch: (value) {
+          _page = 1;
+          _search = value;
+          _load();
+        }),
+        ListPages(
+            page: _page,
+            totalPages: _totalPages,
+            loading: _loading,
+            onPage: (page) {
+              _page = page;
+              _load();
+            }),
+        const SizedBox(height: 12),
         Expanded(
           child: _loading
               ? const LoadingView()
@@ -90,11 +118,11 @@ class _HairdressersScreenState extends State<HairdressersScreen> {
                                   final sel = _selected?.id == h.id;
                                   return ListTile(
                                     selected: sel,
-                                    selectedTileColor:
-                                        AppColors.primary.withValues(alpha: 0.08),
+                                    selectedTileColor: AppColors.primary
+                                        .withValues(alpha: 0.08),
                                     leading: CircleAvatar(
-                                      backgroundColor:
-                                          AppColors.primary.withValues(alpha: 0.1),
+                                      backgroundColor: AppColors.primary
+                                          .withValues(alpha: 0.1),
                                       child: Text(
                                           h.fullName.isNotEmpty
                                               ? h.fullName[0]
@@ -154,7 +182,13 @@ class _HairdresserDetailState extends State<_HairdresserDetail> {
   bool _saving = false;
 
   static const _dayNames = [
-    "Ponedjeljak", "Utorak", "Srijeda", "Cetvrtak", "Petak", "Subota", "Nedjelja"
+    "Ponedjeljak",
+    "Utorak",
+    "Srijeda",
+    "Cetvrtak",
+    "Petak",
+    "Subota",
+    "Nedjelja"
   ];
   // mapiranje na DayOfWeek (0=ned..6=sub)
   static const _dayOrder = [1, 2, 3, 4, 5, 6, 0];
@@ -214,15 +248,15 @@ class _HairdresserDetailState extends State<_HairdresserDetail> {
   }
 
   Future<void> _pickTime(int index, bool isStart) async {
-    final parts = (isStart ? _hours[index].startTime : _hours[index].endTime)
-        .split(":");
+    final parts =
+        (isStart ? _hours[index].startTime : _hours[index].endTime).split(":");
     final picked = await showTimePicker(
       context: context,
       initialTime: TimeOfDay(
           hour: int.tryParse(parts[0]) ?? 9,
           minute: int.tryParse(parts.length > 1 ? parts[1] : "0") ?? 0),
     );
-    if (picked == null) return;
+    if (!mounted || picked == null) return;
     final str =
         "${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}";
     setState(() {
@@ -355,8 +389,7 @@ class _HairdresserAccountDialog extends StatefulWidget {
       _HairdresserAccountDialogState();
 }
 
-class _HairdresserAccountDialogState
-    extends State<_HairdresserAccountDialog> {
+class _HairdresserAccountDialogState extends State<_HairdresserAccountDialog> {
   final _formKey = GlobalKey<FormState>();
   final _firstName = TextEditingController();
   final _lastName = TextEditingController();
@@ -399,7 +432,8 @@ class _HairdresserAccountDialogState
         "salonId": _salonId,
       });
       if (mounted) {
-        showOk(context, "Frizer kreiran. Moze se prijaviti svojim kredencijalima.");
+        showOk(context,
+            "Frizer kreiran. Moze se prijaviti svojim kredencijalima.");
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -479,7 +513,9 @@ class _HairdresserAccountDialogState
                 TextFormField(
                   controller: _email,
                   decoration: const InputDecoration(labelText: "Email"),
-                  validator: (v) => (v == null || !v.contains("@"))
+                  validator: (v) => (v == null ||
+                          !RegExp(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+                              .hasMatch(v.trim()))
                       ? "Neispravan email"
                       : null,
                 ),
@@ -487,8 +523,9 @@ class _HairdresserAccountDialogState
                 TextFormField(
                   controller: _password,
                   decoration: const InputDecoration(labelText: "Lozinka"),
-                  validator: (v) =>
-                      (v == null || v.length < 6) ? "Najmanje 6 karaktera" : null,
+                  validator: (v) => (v == null || v.length < 6)
+                      ? "Najmanje 6 karaktera"
+                      : null,
                 ),
               ],
             ),

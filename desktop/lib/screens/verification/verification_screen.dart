@@ -17,6 +17,13 @@ class _VerificationScreenState extends State<VerificationScreen>
   List<SalonDto> _salons = [];
   List<HairdresserDto> _hairdressers = [];
   bool _loading = false;
+  String _search = "";
+  int _request = 0;
+  int _page = 1;
+  int _salonPages = 0;
+  int _staffPages = 0;
+  Object? _error;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -32,75 +39,78 @@ class _VerificationScreenState extends State<VerificationScreen>
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final request = ++_request;
+    final search = _search;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final api = context.read<ApiService>();
-      _salons = (await api.getSalons(pageSize: 100)).items;
-      _hairdressers = (await api.getHairdressers(pageSize: 100)).items;
+      final (salons, hairdressers) = await (
+        api.getSalons(page: _page, pageSize: 25, search: search),
+        api.getHairdressers(page: _page, pageSize: 25, search: search),
+      ).wait;
+      if (!mounted || request != _request) return;
+      _salonPages = salons.totalPages;
+      _staffPages = hairdressers.totalPages;
+      _salons = salons.items;
+      _hairdressers = hairdressers.items;
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted && request == _request) _error = e;
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
   }
 
-  Future<String?> _askReason() async {
-    final c = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Razlog odbijanja"),
-        content: TextField(
-            controller: c,
-            autofocus: true,
-            maxLines: 2,
-            decoration: const InputDecoration(hintText: "Obavezno obrazlozenje")),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("Odustani")),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.cancelled),
-            onPressed: () {
-              if (c.text.trim().isEmpty) return;
-              Navigator.pop(ctx, c.text.trim());
-            },
-            child: const Text("Odbij"),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<String?> _askReason() =>
+      showReasonDialog(context, "Razlog odbijanja", "Odbij");
 
   Future<void> _verifySalon(SalonDto s, bool approve) async {
+    if (_saving) return;
     String? reason;
     if (!approve) {
       reason = await _askReason();
-      if (reason == null) return;
+      if (!mounted || reason == null) return;
     }
+    if (_saving) return;
+    setState(() => _saving = true);
     try {
-      await context.read<ApiService>().verifySalon(s.id, approve, reason: reason);
-      if (mounted) showOk(context, approve ? "Salon odobren." : "Salon odbijen.");
-      _load();
+      await context
+          .read<ApiService>()
+          .verifySalon(s.id, approve, reason: reason);
+      if (mounted) {
+        showOk(context, approve ? "Salon odobren." : "Salon odbijen.");
+      }
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _verifyHairdresser(HairdresserDto h, bool approve) async {
+    if (_saving) return;
     String? reason;
     if (!approve) {
       reason = await _askReason();
-      if (reason == null) return;
+      if (!mounted || reason == null) return;
     }
+    if (_saving) return;
+    setState(() => _saving = true);
     try {
       await context
           .read<ApiService>()
           .verifyHairdresser(h.id, approve, reason: reason);
-      if (mounted) showOk(context, approve ? "Frizer odobren." : "Frizer odbijen.");
-      _load();
+      if (mounted) {
+        showOk(context, approve ? "Frizer odobren." : "Frizer odbijen.");
+      }
+      if (mounted) _load();
     } catch (e) {
       if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -112,23 +122,46 @@ class _VerificationScreenState extends State<VerificationScreen>
         const PageHeader("Verifikacija",
             subtitle: "Odobravanje salona i frizera"),
         const SizedBox(height: 16),
+        ListSearch(onSearch: (value) {
+          _page = 1;
+          _search = value;
+          _load();
+        }),
         TabBar(
           controller: _tab,
+          onTap: (_) {
+            _page = 1;
+            _load();
+          },
           labelColor: AppColors.primary,
           indicatorColor: AppColors.primary,
           tabs: const [Tab(text: "Saloni"), Tab(text: "Frizeri")],
         ),
         const SizedBox(height: 16),
+        ListPages(
+            page: _page,
+            totalPages: _tab.index == 0 ? _salonPages : _staffPages,
+            loading: _loading || _saving,
+            onPage: (page) {
+              _page = page;
+              _load();
+            }),
         Expanded(
           child: _loading
               ? const LoadingView()
-              : TabBarView(
-                  controller: _tab,
-                  children: [
-                    _salonList(),
-                    _hairdresserList(),
-                  ],
-                ),
+              : _error != null
+                  ? Center(
+                      child: TextButton(
+                          onPressed: _load,
+                          child: Text("Pokušaj ponovo: $_error")))
+                  : TabBarView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      controller: _tab,
+                      children: [
+                        _salonList(),
+                        _hairdresserList(),
+                      ],
+                    ),
         ),
       ],
     );
@@ -196,8 +229,8 @@ class _VerificationScreenState extends State<VerificationScreen>
         leading: const Icon(Icons.store, color: AppColors.primary),
         title: Text(s.name),
         subtitle: Text("${s.address}, ${s.cityName}"),
-        trailing: _actions(s.verificationStatus,
-            () => _verifySalon(s, true), () => _verifySalon(s, false)),
+        trailing: _actions(s.verificationStatus, () => _verifySalon(s, true),
+            () => _verifySalon(s, false)),
       ),
     );
   }
@@ -209,8 +242,10 @@ class _VerificationScreenState extends State<VerificationScreen>
         leading: const Icon(Icons.person, color: AppColors.primary),
         title: Text(h.fullName),
         subtitle: Text("${h.specialization} · ${h.salonName}"),
-        trailing: _actions(h.verificationStatus,
-            () => _verifyHairdresser(h, true), () => _verifyHairdresser(h, false)),
+        trailing: _actions(
+            h.verificationStatus,
+            () => _verifyHairdresser(h, true),
+            () => _verifyHairdresser(h, false)),
       ),
     );
   }
@@ -223,16 +258,16 @@ class _VerificationScreenState extends State<VerificationScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         TextButton.icon(
-          onPressed: approve,
+          onPressed: _saving ? null : approve,
           icon: const Icon(Icons.check, color: AppColors.completed, size: 18),
           label: const Text("Odobri",
               style: TextStyle(color: AppColors.completed)),
         ),
         TextButton.icon(
-          onPressed: reject,
+          onPressed: _saving ? null : reject,
           icon: const Icon(Icons.close, color: AppColors.cancelled, size: 18),
-          label: const Text("Odbij",
-              style: TextStyle(color: AppColors.cancelled)),
+          label:
+              const Text("Odbij", style: TextStyle(color: AppColors.cancelled)),
         ),
       ],
     );

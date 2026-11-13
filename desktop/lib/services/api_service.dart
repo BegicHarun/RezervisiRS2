@@ -10,13 +10,17 @@ class ApiService {
 
   // ---- Auth ----
   Future<AuthResponse> login(String username, String password) async {
-    final j = await _api
-        .post("/auth/login", body: {"username": username, "password": password});
+    final j = await _api.post("/auth/login",
+        body: {"username": username, "password": password});
     return AuthResponse.fromJson(j);
   }
 
   Future<UserDto> getProfile() async =>
       UserDto.fromJson(await _api.get("/profile"));
+
+  Future<void> logout() async {
+    await _api.post("/auth/logout");
+  }
 
   // ---- Dashboard ----
   Future<DashboardDto> getDashboard() async =>
@@ -27,12 +31,18 @@ class ApiService {
     int page = 1,
     int pageSize = 20,
     String? status,
+    DateTime? from,
+    DateTime? to,
+    int? hairdresserId,
     String? search,
   }) async {
     final j = await _api.get("/reservations", query: {
       "page": page,
       "pageSize": pageSize,
       "status": status,
+      "from": from?.toUtc().toIso8601String(),
+      "to": to?.toUtc().toIso8601String(),
+      "hairdresserId": hairdresserId,
       "search": search,
     });
     return PagedResult.fromJson(j, ReservationDto.fromJson);
@@ -40,8 +50,8 @@ class ApiService {
 
   Future<ReservationDto> changeStatus(int id, String status,
       {String? reason}) async {
-    final j = await _api
-        .post("/reservations/$id/status", body: {"status": status, "reason": reason});
+    final j = await _api.post("/reservations/$id/status",
+        body: {"status": status, "reason": reason});
     return ReservationDto.fromJson(j);
   }
 
@@ -70,8 +80,12 @@ class ApiService {
   // ---- Hairdressers ----
   Future<PagedResult<HairdresserDto>> getHairdressers(
       {int page = 1, int pageSize = 50, int? salonId, String? search}) async {
-    final j = await _api.get("/hairdressers",
-        query: {"page": page, "pageSize": pageSize, "salonId": salonId, "search": search});
+    final j = await _api.get("/hairdressers", query: {
+      "page": page,
+      "pageSize": pageSize,
+      "salonId": salonId,
+      "search": search
+    });
     return PagedResult.fromJson(j, HairdresserDto.fromJson);
   }
 
@@ -95,21 +109,26 @@ class ApiService {
 
   Future<List<WorkingHourDto>> setWorkingHours(
       int hairdresserId, List<Map<String, dynamic>> hours) async {
-    final j = await _api.put("/hairdressers/$hairdresserId/working-hours", body: hours);
+    final j = await _api.put("/hairdressers/$hairdresserId/working-hours",
+        body: hours);
     return (j as List).map((e) => WorkingHourDto.fromJson(e)).toList();
   }
 
   // ---- Salons ----
   Future<PagedResult<SalonDto>> getSalons(
       {int page = 1, int pageSize = 50, String? search}) async {
-    final j = await _api.get("/salons",
-        query: {"page": page, "pageSize": pageSize, "search": search, "onlyApproved": false});
+    final j = await _api.get("/salons", query: {
+      "page": page,
+      "pageSize": pageSize,
+      "search": search,
+      "onlyApproved": false
+    });
     return PagedResult.fromJson(j, SalonDto.fromJson);
   }
 
   Future<SalonDto> verifySalon(int id, bool approve, {String? reason}) async {
-    final j = await _api
-        .post("/salons/$id/verify", body: {"approve": approve, "rejectionReason": reason});
+    final j = await _api.post("/salons/$id/verify",
+        body: {"approve": approve, "rejectionReason": reason});
     return SalonDto.fromJson(j);
   }
 
@@ -120,8 +139,10 @@ class ApiService {
   Future<void> deleteSalon(int id) async => _api.delete("/salons/$id");
 
   // ---- Reference (cities, categories) ----
-  Future<PagedResult<CityDto>> getCities() async {
-    final j = await _api.get("/cities", query: {"pageSize": 100});
+  Future<PagedResult<CityDto>> getCities(
+      {int page = 1, int pageSize = 100, String? search}) async {
+    final j = await _api.get("/cities",
+        query: {"page": page, "pageSize": pageSize, "search": search});
     return PagedResult.fromJson(j, CityDto.fromJson);
   }
 
@@ -131,8 +152,10 @@ class ApiService {
       CityDto.fromJson(await _api.put("/cities/$id", body: body));
   Future<void> deleteCity(int id) async => _api.delete("/cities/$id");
 
-  Future<PagedResult<ServiceCategoryDto>> getCategories() async {
-    final j = await _api.get("/categories", query: {"pageSize": 100});
+  Future<PagedResult<ServiceCategoryDto>> getCategories(
+      {int page = 1, int pageSize = 100, String? search}) async {
+    final j = await _api.get("/categories",
+        query: {"page": page, "pageSize": pageSize, "search": search});
     return PagedResult.fromJson(j, ServiceCategoryDto.fromJson);
   }
 
@@ -140,8 +163,28 @@ class ApiService {
       ServiceCategoryDto.fromJson(await _api.post("/categories", body: body));
   Future<ServiceCategoryDto> updateCategory(
           int id, Map<String, dynamic> body) async =>
-      ServiceCategoryDto.fromJson(await _api.put("/categories/$id", body: body));
+      ServiceCategoryDto.fromJson(
+          await _api.put("/categories/$id", body: body));
   Future<void> deleteCategory(int id) async => _api.delete("/categories/$id");
+
+  Future<PagedResult<TagDto>> getTags({int page = 1, String? search}) async =>
+      PagedResult.fromJson(
+          await _api.get("/tags/manage", query: {
+            "page": page,
+            "pageSize": 25,
+            "search": search,
+          }),
+          TagDto.fromJson);
+
+  Future<void> saveTag(int? id, String name) async {
+    if (id == null) {
+      await _api.post("/tags", body: {"name": name});
+    } else {
+      await _api.put("/tags/$id", body: {"name": name});
+    }
+  }
+
+  Future<void> deleteTag(int id) => _api.delete("/tags/$id");
 
   // ---- Reports (PDF) ----
   Future<Uint8List> revenueReport(DateTime from, DateTime to) =>

@@ -75,8 +75,8 @@ class PageHeader extends StatelessWidget {
 }
 
 void showError(BuildContext context, Object e) {
-  ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(e.toString()), backgroundColor: AppColors.cancelled));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(e.toString()), backgroundColor: AppColors.cancelled));
 }
 
 void showOk(BuildContext context, String msg) {
@@ -123,9 +123,7 @@ class KpiCard extends StatelessWidget {
                   Row(
                     children: [
                       Icon(
-                          trend! >= 0
-                              ? Icons.trending_up
-                              : Icons.trending_down,
+                          trend! >= 0 ? Icons.trending_up : Icons.trending_down,
                           size: 16,
                           color: trend! >= 0
                               ? AppColors.completed
@@ -152,4 +150,89 @@ class KpiCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class ListSearch extends StatelessWidget {
+  const ListSearch({super.key, required this.onSearch});
+  final ValueChanged<String> onSearch;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        textInputAction: TextInputAction.search,
+        onSubmitted: (value) => onSearch(value.trim()),
+        decoration: const InputDecoration(
+          prefixIcon: Icon(Icons.search),
+          labelText: "Pretraga",
+          hintText: "Upišite pojam i pritisnite Enter",
+        ),
+      );
+}
+
+class ListPages extends StatelessWidget {
+  const ListPages(
+      {super.key,
+      required this.page,
+      required this.totalPages,
+      required this.onPage,
+      required this.loading});
+
+  final int page;
+  final int totalPages;
+  final ValueChanged<int> onPage;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          IconButton(
+            tooltip: "Prethodna stranica",
+            onPressed: loading || page <= 1 ? null : () => onPage(page - 1),
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Text("Stranica $page od ${totalPages == 0 ? 1 : totalPages}"),
+          IconButton(
+            tooltip: "Sljedeća stranica",
+            onPressed:
+                loading || page >= totalPages ? null : () => onPage(page + 1),
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      );
+}
+
+Future<String?> showReasonDialog(
+    BuildContext context, String title, String action) {
+  final form = GlobalKey<FormState>();
+  var reason = "";
+  return showDialog<String>(
+    context: context,
+    builder: (dialog) => AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+          width: 360,
+          child: Form(
+            key: form,
+            child: TextFormField(
+              autofocus: true,
+              maxLines: 3,
+              maxLength: 500,
+              decoration: const InputDecoration(labelText: "Razlog"),
+              onChanged: (value) => reason = value.trim(),
+              validator: (value) =>
+                  (value?.trim().isEmpty ?? true) ? "Unesite razlog." : null,
+            ),
+          )),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text("Odustani")),
+        FilledButton(
+            onPressed: () {
+              if (form.currentState!.validate()) Navigator.pop(dialog, reason);
+            },
+            child: Text(action)),
+      ],
+    ),
+  );
 }

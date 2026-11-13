@@ -11,8 +11,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _username = TextEditingController(text: "admin");
-  final _password = TextEditingController(text: "Test1234!");
+  final _username = TextEditingController();
+  final _password = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         decoration: const InputDecoration(
                             labelText: "Korisnicko ime",
                             prefixIcon: Icon(Icons.person_outline)),
-                        validator: (v) => (v == null || v.isEmpty)
+                        validator: (v) => (v == null || v.trim().isEmpty)
                             ? "Unesite korisnicko ime"
                             : null,
                       ),
@@ -115,8 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             : const Text("Prijava"),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                          "admin / Test1234!  ·  desktop / Test1234!",
+                      const Text("admin / Test1234!  ·  desktop / Test1234!",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               fontSize: 12, color: AppColors.textSecondary)),
